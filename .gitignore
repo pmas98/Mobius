@@ -1,0 +1,43 @@
+# Binaries and build output
+*.exe
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+*.o
+
+# Go modules and caches
+/go.sum
+/go.mod
+/go-build/
+*.mod
+*.sum
+
+# Directories
+.clj-kondo/
+.lsp/
+incoming/
+outgoing/
+
+# IDE/editor specific files
+.idea/
+.vscode/
+*.iml
+
+# Logs and debug files
+*.log
+*.bak
+*.tmp
+
+# OS generated files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Secrets and sensitive files
+.env
+*.key
+*.crt
+*.pem
+
