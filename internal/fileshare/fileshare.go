@@ -3,6 +3,12 @@ package fileshare
 import (
 	"bufio"
 	"context"
+	"crypto/aes"
+	"crypto/cipher"
+	"crypto/rand"
+	"crypto/rsa"
+	"crypto/sha256"
+	"encoding/base64"
 	"fmt"
 	"io"
 	"log"
@@ -18,17 +24,19 @@ import (
 const protocolID = "/mobius/1.0.0"
 
 type FileShare struct {
-	host     host.Host
-	incoming string // Directory for incoming files
-	mu       sync.RWMutex
-	peers    map[string]bool
+	host           host.Host
+	incoming       string
+	mu             sync.RWMutex
+	peers          map[string]bool
+	peerPublicKeys map[string]*rsa.PublicKey // Changed from keys to peerPublicKeys for clarity
 }
 
 func NewFileShare(h host.Host, incomingDir string) *FileShare {
 	fs := &FileShare{
-		host:     h,
-		incoming: incomingDir,
-		peers:    make(map[string]bool),
+		host:           h,
+		incoming:       incomingDir,
+		peers:          make(map[string]bool),
+		peerPublicKeys: make(map[string]*rsa.PublicKey), // Initialize the peerPublicKeys map
 	}
 
 	// Ensure directories exist
@@ -39,18 +47,93 @@ func NewFileShare(h host.Host, incomingDir string) *FileShare {
 	return fs
 }
 
+func (fs *FileShare) getPeerPublicKey(peerID string) (*rsa.PublicKey, error) {
+	fs.mu.RLock()
+	defer fs.mu.RUnlock()
+
+	publicKey, exists := fs.peerPublicKeys[peerID] // Fixed map name
+	if !exists {
+		return nil, fmt.Errorf("public key for peer %s not found", peerID)
+	}
+
+	return publicKey, nil
+}
+
+func generateSymmetricKey() ([]byte, error) {
+	key := make([]byte, 32) // AES-256
+	_, err := rand.Read(key)
+	if err != nil {
+		return nil, err
+	}
+	return key, nil
+}
+
+func encryptKeyForPeer(publicKey *rsa.PublicKey, key []byte) (string, error) {
+	encryptedKey, err := rsa.EncryptOAEP(sha256.New(), rand.Reader, publicKey, key, nil)
+	if err != nil {
+		return "", err
+	}
+	return base64.StdEncoding.EncodeToString(encryptedKey), nil
+}
+
+func encryptFile(inputPath, outputPath string, key []byte) error {
+	file, err := os.Open(inputPath)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+
+	output, err := os.Create(outputPath)
+	if err != nil {
+		return err
+	}
+	defer output.Close()
+
+	block, err := aes.NewCipher(key)
+	if err != nil {
+		return err
+	}
+
+	iv := make([]byte, aes.BlockSize)
+	if _, err := io.ReadFull(rand.Reader, iv); err != nil {
+		return err
+	}
+
+	stream := cipher.NewCFBEncrypter(block, iv)
+	writer := &cipher.StreamWriter{S: stream, W: output}
+
+	// Write IV to the beginning of the file
+	if _, err := output.Write(iv); err != nil {
+		return err
+	}
+
+	if _, err := io.Copy(writer, file); err != nil {
+		return err
+	}
+
+	return nil
+}
+
 func (fs *FileShare) handleIncomingFile(s libp2pnetwork.Stream) {
 	defer s.Close()
 
 	reader := bufio.NewReader(s)
 
-	// Read filename
+	// Read filename first
 	filename, err := reader.ReadString('\n')
 	if err != nil {
 		log.Printf("Error reading filename: %v", err)
 		return
 	}
 	filename = filename[:len(filename)-1] // Remove newline
+
+	// Read encrypted key
+	encryptedKey, err := reader.ReadString('\n')
+	if err != nil {
+		log.Printf("Error reading encrypted key: %v", err)
+		return
+	}
+	encryptedKey = encryptedKey[:len(encryptedKey)-1] // Remove newline
 
 	// Create file in incoming directory
 	filepath := filepath.Join(fs.incoming, filename)
@@ -61,57 +144,31 @@ func (fs *FileShare) handleIncomingFile(s libp2pnetwork.Stream) {
 	}
 	defer file.Close()
 
-	// Copy file data
+	// Copy encrypted file data
 	_, err = io.Copy(file, reader)
 	if err != nil {
 		log.Printf("Error receiving file: %v", err)
 		return
 	}
 
-	log.Printf("Received file: %s from peer: %s", filename, s.Conn().RemotePeer().String())
-}
-
-func (fs *FileShare) sendFileToPeer(ctx context.Context, peerID, filePath, filename string) error {
-	// Convert string peer ID to PeerID type
-	pid, err := peer.Decode(peerID)
-	if err != nil {
-		return fmt.Errorf("invalid peer ID: %w", err)
-	}
-
-	// Open stream to peer using the peer's ID, not our own
-	stream, err := fs.host.NewStream(ctx, pid, protocolID)
-	if err != nil {
-		return fmt.Errorf("failed to open stream: %w", err)
-	}
-	defer stream.Close()
-
-	// Send filename
-	if _, err := fmt.Fprintf(stream, "%s\n", filename); err != nil {
-		return fmt.Errorf("failed to send filename: %w", err)
-	}
-
-	// Open and send file
-	file, err := os.Open(filePath)
-	if err != nil {
-		return fmt.Errorf("failed to open file: %w", err)
-	}
-	defer file.Close()
-
-	if _, err := io.Copy(stream, file); err != nil {
-		return fmt.Errorf("failed to send file: %w", err)
-	}
-
-	return nil
+	log.Printf("Received encrypted file: %s from peer: %s", filename, s.Conn().RemotePeer().String())
 }
 
 func (fs *FileShare) shareFile(ctx context.Context, filePath string) error {
-	// Verify file exists
-	file, err := os.Open(filePath)
+	// Generate symmetric key
+	key, err := generateSymmetricKey()
 	if err != nil {
-		return fmt.Errorf("failed to open file: %w", err)
+		return fmt.Errorf("failed to generate symmetric key: %w", err)
 	}
-	defer file.Close()
 
+	// Encrypt file
+	encryptedFilePath := filePath + ".enc"
+	if err := encryptFile(filePath, encryptedFilePath, key); err != nil {
+		return fmt.Errorf("failed to encrypt file: %w", err)
+	}
+	defer os.Remove(encryptedFilePath)
+
+	// Get filename
 	filename := filepath.Base(filePath)
 
 	// Share with all peers
@@ -129,9 +186,23 @@ func (fs *FileShare) shareFile(ctx context.Context, filePath string) error {
 		wg.Add(1)
 		go func(pid string) {
 			defer wg.Done()
-			if err := fs.sendFileToPeer(ctx, pid, filePath, filename); err != nil {
-				log.Printf("Error sharing file with peer %s: %v", pid, err)
-				errChan <- err
+
+			publicKey, err := fs.getPeerPublicKey(pid)
+			if err != nil {
+				errChan <- fmt.Errorf("failed to get public key for peer %s: %w", pid, err)
+				return
+			}
+
+			// Encrypt the symmetric key for the peer
+			encryptedKey, err := encryptKeyForPeer(publicKey, key)
+			if err != nil {
+				errChan <- fmt.Errorf("failed to encrypt key for peer %s: %w", pid, err)
+				return
+			}
+
+			// Send encrypted file and key
+			if err := fs.sendEncryptedFile(ctx, pid, encryptedFilePath, filename, encryptedKey); err != nil {
+				errChan <- fmt.Errorf("failed to share file with peer %s: %w", pid, err)
 			}
 		}(peerID)
 	}
@@ -139,7 +210,6 @@ func (fs *FileShare) shareFile(ctx context.Context, filePath string) error {
 	wg.Wait()
 	close(errChan)
 
-	// Check if all transfers failed
 	var errors []error
 	for err := range errChan {
 		errors = append(errors, err)
@@ -147,6 +217,44 @@ func (fs *FileShare) shareFile(ctx context.Context, filePath string) error {
 
 	if len(errors) == len(fs.peers) {
 		return fmt.Errorf("failed to share file with any peers: %v", errors[0])
+	}
+
+	return nil
+}
+
+func (fs *FileShare) sendEncryptedFile(ctx context.Context, peerID, encryptedFilePath, filename, encryptedKey string) error {
+	// Convert string peer ID to PeerID type
+	pid, err := peer.Decode(peerID)
+	if err != nil {
+		return fmt.Errorf("invalid peer ID: %w", err)
+	}
+
+	// Open stream to peer
+	stream, err := fs.host.NewStream(ctx, pid, protocolID)
+	if err != nil {
+		return fmt.Errorf("failed to open stream: %w", err)
+	}
+	defer stream.Close()
+
+	// Send filename first
+	if _, err := fmt.Fprintf(stream, "%s\n", filename); err != nil {
+		return fmt.Errorf("failed to send filename: %w", err)
+	}
+
+	// Send encrypted key
+	if _, err := fmt.Fprintf(stream, "%s\n", encryptedKey); err != nil {
+		return fmt.Errorf("failed to send encrypted key: %w", err)
+	}
+
+	// Send encrypted file
+	file, err := os.Open(encryptedFilePath)
+	if err != nil {
+		return fmt.Errorf("failed to open encrypted file: %w", err)
+	}
+	defer file.Close()
+
+	if _, err := io.Copy(stream, file); err != nil {
+		return fmt.Errorf("failed to send encrypted file: %w", err)
 	}
 
 	return nil
