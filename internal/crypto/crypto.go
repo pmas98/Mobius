@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"os"
 	"sync"
 )
@@ -31,11 +32,13 @@ var (
 type CryptoManager struct {
 	mu             sync.RWMutex
 	peerPublicKeys map[string]*rsa.PublicKey
+	encryptionKeys map[string][]byte // Store encryption keys by file hash
 }
 
 func NewCryptoManager() *CryptoManager {
 	return &CryptoManager{
 		peerPublicKeys: make(map[string]*rsa.PublicKey),
+		encryptionKeys: make(map[string][]byte),
 	}
 }
 
@@ -204,4 +207,39 @@ func (cm *CryptoManager) DecryptKeyFromPeer(privateKey *rsa.PrivateKey, encrypte
 	}
 
 	return decryptedKey, nil
+}
+
+func (cm *CryptoManager) RemovePeerPublicKey(peerID string) {
+	cm.mu.Lock()
+	defer cm.mu.Unlock()
+
+	// Check if the peer exists
+	if _, exists := cm.peerPublicKeys[peerID]; exists {
+		delete(cm.peerPublicKeys, peerID)
+		log.Printf("Removed public key for peer: %s", peerID)
+	} else {
+		log.Printf("No public key found for peer: %s", peerID)
+	}
+}
+
+func (cm *CryptoManager) StoreKeyForFile(fileHash string, key []byte) error {
+	cm.mu.Lock()
+	defer cm.mu.Unlock()
+
+	// Store the key for the file hash
+	cm.encryptionKeys[fileHash] = key
+	return nil
+}
+
+// Retrieve the encryption key for a file hash
+func (cm *CryptoManager) GetKeyForFile(fileHash string) ([]byte, error) {
+	cm.mu.RLock()
+	defer cm.mu.RUnlock()
+
+	// Check if the key exists
+	key, exists := cm.encryptionKeys[fileHash]
+	if !exists {
+		return nil, fmt.Errorf("no encryption key found for file hash: %s", fileHash)
+	}
+	return key, nil
 }

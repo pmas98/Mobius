@@ -2,66 +2,125 @@ package network
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/json"
 	"fmt"
 	"time"
 
 	"github.com/ipfs/go-log/v2"
 	"github.com/libp2p/go-libp2p"
 	dht "github.com/libp2p/go-libp2p-kad-dht"
+	record "github.com/libp2p/go-libp2p-record"
+	"github.com/libp2p/go-libp2p/core/crypto"
 	"github.com/libp2p/go-libp2p/core/host"
 	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/libp2p/go-libp2p/p2p/discovery/routing"
+
 	"github.com/multiformats/go-multiaddr"
 )
 
 var logger = log.Logger("p2p-discovery")
 
+type FileMetadataValidator struct{}
+type FileMetadata struct {
+	Name         string `json:"name"`
+	Size         int64  `json:"size"`
+	FileType     string `json:"file_type"`
+	UploadedBy   string `json:"uploaded_by"`
+	UploadDate   string `json:"upload_date"`
+	LastModified string `json:"last_modified"`
+}
+
+func (v *FileMetadataValidator) Select(key string, values [][]byte) (int, error) {
+	// Implement selection logic if needed, for now, just return the first value
+	return 0, nil
+}
+
+func (v *FileMetadataValidator) Validate(key string, value []byte) error {
+	// Ensure the key has the correct format
+	if len(key) < 10 {
+		return fmt.Errorf("invalid key: too short")
+	}
+
+	// Ensure the value (metadata) is not empty
+	if len(value) == 0 {
+		return fmt.Errorf("invalid value: empty")
+	}
+
+	// Try to unmarshal the value as JSON to ensure it's valid metadata
+	var metadata FileMetadata
+	if err := json.Unmarshal(value, &metadata); err != nil {
+		return fmt.Errorf("invalid metadata format: %v", err)
+	}
+
+	return nil
+}
+
 // InitializeNode initializes a libp2p node with Kademlia DHT
-func InitializeNode(bootstrapPeers []multiaddr.Multiaddr) (host.Host, error) {
-	// Create a new libp2p host with explicit listen addresses
-	h, err := libp2p.New(
-		libp2p.ListenAddrStrings(
-			"/ip4/0.0.0.0/tcp/0",
-			"/ip6/::/tcp/0",
-		),
-		libp2p.EnableRelay(),
-	)
+func InitializeNode() (*dht.IpfsDHT, host.Host, error) {
+	ctx := context.Background()
+
+	privKey, _, err := crypto.GenerateKeyPairWithReader(crypto.ECDSA, 256, rand.Reader)
+
 	if err != nil {
-		return nil, fmt.Errorf("failed to create libp2p host: %w", err)
+		panic(err)
+	}
+	h, err := libp2p.New(
+		libp2p.Identity(privKey),
+		libp2p.DefaultTransports,
+		libp2p.DefaultListenAddrs,
+		libp2p.EnableNATService(),
+	)
+
+	// Set up a DHT with a custom validator for the "file" namespace
+	validatorMap := record.NamespacedValidator{
+		"mobius": &FileMetadataValidator{}, // Use the custom file metadata validator
+	}
+
+	idht, d_err := dht.New(ctx, h, dht.Mode(dht.ModeClient), dht.Validator(validatorMap), dht.ProtocolPrefix("/mobius"))
+
+	if d_err != nil {
+		return nil, nil, fmt.Errorf("failed to create libp2p host: %w", err)
+	}
+
+	bootstrapPeers := []string{
+		"/ip4/127.0.0.1/tcp/52545/p2p/12D3KooWE1axeDBMnCTedz7w8CWce9kLk7DwyqvtH8VJ8o37KJtn",
+	}
+	var addrInfos []peer.AddrInfo
+	for _, addr := range bootstrapPeers {
+		maddr, err := multiaddr.NewMultiaddr(addr)
+		if err != nil {
+			logger.Fatalf("Failed to parse multiaddress: %v", err)
+		}
+		pinfo, err := peer.AddrInfoFromString(maddr.String())
+		if err != nil {
+			logger.Fatalf("Failed to get peer info from multiaddress: %v", err)
+		}
+		addrInfos = append(addrInfos, *pinfo)
+	}
+
+	// Connect to bootstrap peers
+	for _, addrInfo := range addrInfos {
+		if err := h.Connect(ctx, addrInfo); err != nil {
+			logger.Fatal("Failed to connect to bootstrap peer %v: %v", addrInfo.ID, err)
+		} else {
+			fmt.Printf("Connected to bootstrap peer %v", addrInfo.ID)
+		}
 	}
 
 	logger.Info("Node started with addresses:", h.Addrs())
 	logger.Info("Peer ID:", h.ID())
 
-	// Create a new DHT client mode instance
-	ctx := context.Background()
-	kademliaDHT, err := dht.New(ctx, h,
-		dht.Mode(dht.ModeClient),
-		dht.BootstrapPeers(convertToAddrInfo(bootstrapPeers)...),
-	)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create DHT: %w", err)
+		return nil, nil, fmt.Errorf("failed to create DHT: %w", err)
 	}
 
-	// Bootstrap the DHT
-	logger.Info("Bootstrapping the DHT")
-	if err := kademliaDHT.Bootstrap(ctx); err != nil {
-		return nil, fmt.Errorf("failed to bootstrap DHT: %w", err)
-	}
-
-	// Connect to bootstrap peers
-	if err := connectToBootstrapPeers(ctx, h, bootstrapPeers); err != nil {
-		logger.Warning("Failed to connect to some bootstrap peers:", err)
-	}
-
-	// Start peer discovery
-	routingDiscovery := routing.NewRoutingDiscovery(kademliaDHT)
+	routingDiscovery := routing.NewRoutingDiscovery(idht)
 	go startDiscovery(ctx, h, routingDiscovery)
 
-	return h, nil
+	return idht, h, nil
 }
 
-// connectToBootstrapPeers attempts to connect to the bootstrap peers
 func connectToBootstrapPeers(ctx context.Context, h host.Host, bootstrapPeers []multiaddr.Multiaddr) error {
 	peerInfos := convertToAddrInfo(bootstrapPeers)
 
@@ -103,7 +162,7 @@ func startDiscovery(ctx context.Context, h host.Host, routingDiscovery *routing.
 	// Define discovery parameters
 	const (
 		discoveryInterval = 1 * time.Minute
-		rendezvousString  = "p2p-file-sharing"
+		rendezvousString  = "mobius-p2p-file-sharing"
 	)
 
 	// Continuously advertise and discover peers

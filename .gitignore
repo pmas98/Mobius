@@ -40,4 +40,5 @@ desktop.ini
 *.key
 *.crt
 *.pem
-
+db.sqlite3
+shared
