@@ -16,7 +16,7 @@ import (
 // Function to get public IP of the EC2 instance
 func getPublicIP() (string, error) {
 	// Request public IP from AWS metadata API
-	resp, err := http.Get("http://169.254.169.254/latest/meta-data/public-ipv4")
+	resp, err := http.Get("http://checkip.amazonaws.com")
 	if err != nil {
 		return "", fmt.Errorf("failed to get public IP: %w", err)
 	}
@@ -26,6 +26,19 @@ func getPublicIP() (string, error) {
 	ip, err := ioutil.ReadAll(resp.Body)
 	if err != nil {
 		return "", fmt.Errorf("failed to read response body: %w", err)
+	}
+	var jsonResponse interface{}
+	err = json.Unmarshal(ip, &jsonResponse)
+	if err != nil {
+		// If it's not JSON, log the raw bytes
+		fmt.Printf("Response Body (raw): %s\n", ip)
+	} else {
+		// Log the body formatted as JSON
+		prettyJSON, err := json.MarshalIndent(jsonResponse, "", "  ")
+		if err != nil {
+			return "", fmt.Errorf("failed to pretty print JSON: %w", err)
+		}
+		fmt.Printf("Response Body (pretty JSON):\n%s\n", string(prettyJSON))
 	}
 
 	return string(ip), nil
