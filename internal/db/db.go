@@ -82,6 +82,37 @@ func (d *Database) GetFilePath(hash string) (string, error) {
 	return filePath, nil
 }
 
+func (d *Database) ValidateFileMappings() {
+	log.Println("Validating file mappings...")
+
+	rows, err := d.db.Query("SELECT id, file_path FROM file_mapping")
+	if err != nil {
+		log.Printf("Error querying file mappings: %v\n", err)
+		return
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var id int64
+		var filePath string
+		if err := rows.Scan(&id, &filePath); err != nil {
+			log.Printf("Error scanning row: %v\n", err)
+			continue
+		}
+
+		// Check if the file exists
+		if _, err := os.Stat(filePath); os.IsNotExist(err) {
+			log.Printf("File not found for ID %d, path: %s. Removing entry...\n", id, filePath)
+			// Delete the invalid entry
+			_, err := d.db.Exec("DELETE FROM file_mapping WHERE id = ?", id)
+			if err != nil {
+				log.Printf("Error deleting file mapping ID %d: %v\n", id, err)
+			}
+		}
+	}
+	log.Println("File mapping validation completed.")
+}
+
 // Close closes the database connection.
 func (d *Database) Close() error {
 	return d.db.Close()

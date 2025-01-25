@@ -10,6 +10,9 @@ import (
 	"mobius/internal/network"
 	"os"
 	"strings"
+	"time"
+
+	"github.com/ipfs/go-cid"
 )
 
 func main() {
@@ -37,6 +40,15 @@ func main() {
 	fmt.Println("  download [hash]   - Download a file using its hash")
 	fmt.Println("  help              - Show this help message")
 	fmt.Println("  exit              - Exit the program")
+
+	ticker := time.NewTicker(10 * time.Minute)
+	defer ticker.Stop()
+
+	go func() {
+		for range ticker.C {
+			db.ValidateFileMappings()
+		}
+	}()
 
 	scanner := bufio.NewScanner(os.Stdin)
 	for {
@@ -76,7 +88,12 @@ func main() {
 				continue
 			}
 			hash := parts[1]
-			metadata, err := fileShare.GetFileMetadataFromDHT(context.Background(), dht, hash)
+			cid, err := cid.Decode(hash)
+			if err != nil {
+				fmt.Printf("Error decoding hash %s: %v\n", hash, err)
+				continue
+			}
+			metadata, err := fileShare.GetFileMetadataFromDHT(context.Background(), dht, cid)
 			if err != nil {
 				fmt.Printf("Error retrieving metadata for hash %s: %v\n", hash, err)
 			} else {
@@ -92,7 +109,12 @@ func main() {
 				continue
 			}
 			hash := parts[1]
-			err := fileShare.DownloadFile(context.Background(), hash)
+			cid, err := cid.Decode(hash)
+			if err != nil {
+				fmt.Printf("Error decoding hash %s: %v\n", hash, err)
+				continue
+			}
+			err = fileShare.DownloadFile(context.Background(), cid)
 			if err != nil {
 				fmt.Printf("Error downloading file with hash %s: %v\n", hash, err)
 			} else {

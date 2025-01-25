@@ -8,8 +8,10 @@ import (
 	"os"
 	"strings"
 
+	"github.com/ipfs/go-cid"
 	libp2pnetwork "github.com/libp2p/go-libp2p/core/network"
 	"github.com/mr-tron/base58"
+	"github.com/multiformats/go-multihash"
 	mh "github.com/multiformats/go-multihash"
 )
 
@@ -119,4 +121,39 @@ func HashKey(key string) (string, error) {
 	}
 
 	return ipnsKey, nil
+}
+
+func StringInSlice(a string, list []string) bool {
+
+	for _, b := range list {
+
+		if b == a {
+
+			return true
+
+		}
+
+	}
+
+	return false
+
+}
+
+func GenerateFileCID(filePath string) (cid.Cid, error) {
+	// Read file contents
+	fileBytes, err := os.ReadFile(filePath)
+	if err != nil {
+		return cid.Undef, err
+	}
+
+	// Create a CID using the file contents
+	fileCid, err := cid.V1Builder{
+		Codec:  cid.Raw,
+		MhType: multihash.SHA2_256,
+	}.Sum(fileBytes)
+	if err != nil {
+		return cid.Undef, err
+	}
+
+	return fileCid, nil
 }

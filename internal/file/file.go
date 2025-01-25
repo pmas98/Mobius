@@ -18,10 +18,12 @@ import (
 	"mobius/internal/db"
 	"mobius/internal/utils"
 
+	"github.com/ipfs/go-cid"
 	dht "github.com/libp2p/go-libp2p-kad-dht"
 	"github.com/libp2p/go-libp2p/core/host"
 	libp2pnetwork "github.com/libp2p/go-libp2p/core/network"
 	"github.com/libp2p/go-libp2p/core/peer"
+	"github.com/libp2p/go-libp2p/core/routing"
 )
 
 const (
@@ -62,7 +64,15 @@ type FileMetadata struct {
 	Name     string
 	Hash     string
 	Size     int64
-	SharerID string
+	SharerID []string
+}
+
+// ProgressReader tracks download progress
+type ProgressReader struct {
+	Reader   io.Reader
+	Total    int64
+	Current  int64
+	OnUpdate func(float64)
 }
 
 func NewFileManager(h host.Host, downloadDir, sharedDir string, cryptoMgr *crypto.CryptoManager, dhtInstance *dht.IpfsDHT, db *db.Database) (*FileManager, error) {
@@ -133,75 +143,89 @@ func (fm *FileManager) HandleFileRequest(stream libp2pnetwork.Stream) {
 	}
 }
 
-func (fm *FileManager) DownloadFile(ctx context.Context, fileHash string) error {
+func (fm *FileManager) DownloadFile(ctx context.Context, fileHash cid.Cid) error {
 	// Get file metadata from DHT
 	metadata, err := fm.GetFileMetadataFromDHT(ctx, fm.dht, fileHash)
 	if err != nil {
 		return err
 	}
 
-	pid, err := peer.Decode(metadata.SharerID)
-	if err != nil {
+	var downloadSuccess bool
+	for _, sharerID := range metadata.SharerID {
+		pid, err := peer.Decode(sharerID)
+		if err != nil {
+			log.Printf("Failed to decode sharer ID: %s, error: %v", sharerID, err)
+			continue
+		}
+
+		// Attempt to establish a P2P connection
+		stream, err := fm.host.NewStream(ctx, pid, protocolID)
+		if err != nil {
+			log.Printf("Failed to establish stream with peer: %s, error: %v", sharerID, err)
+			continue
+		}
+		defer stream.Close()
+
+		// Send file hash to request the specific file
+		if _, err := fmt.Fprintf(stream, "%s\n", fileHash); err != nil {
+			log.Printf("Failed to send file hash to peer: %s, error: %v", sharerID, err)
+			continue
+		}
+		log.Printf("Sent file hash: %s to peer: %s", fileHash, sharerID)
+
+		// Prepare local file with resume capability
+		localFilePath := filepath.Join(fm.downloadDir, metadata.Name)
+		file, err := os.OpenFile(localFilePath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+		if err != nil {
+			log.Printf("Failed to open local file: %s, error: %v", localFilePath, err)
+			continue
+		}
+		defer file.Close()
+
+		// Get current file size for resuming
+		currentSize, err := file.Seek(0, io.SeekEnd)
+		if err != nil {
+			log.Printf("Failed to seek in local file: %s, error: %v", localFilePath, err)
+			continue
+		}
+
+		// Stream download with progress tracking
+		progressReader := &ProgressReader{
+			Reader:  stream,
+			Total:   metadata.Size,
+			Current: currentSize,
+			OnUpdate: func(progress float64) {
+				log.Printf("Download progress from peer %s: %.2f%%", sharerID, progress*100)
+			},
+		}
+
+		if _, err := io.Copy(file, progressReader); err != nil {
+			log.Printf("Failed to download file from peer: %s, error: %v", sharerID, err)
+
+			continue
+		}
+
+		downloadSuccess = true
+		break // Stop attempting after successful download
+	}
+
+	if !downloadSuccess {
+		return fmt.Errorf("failed to download file from all peers")
+	}
+
+	// Add current peer ID to the SharerID list
+	ownPeerID := fm.host.ID().String()
+	if !utils.StringInSlice(ownPeerID, metadata.SharerID) {
+		metadata.SharerID = append(metadata.SharerID, ownPeerID)
+	}
+
+	if err := fm.storeMetadataInDHT(ctx, fm.dht, fileHash, *metadata); err != nil {
+		log.Printf("Failed to update metadata in DHT: %v", err)
 		return err
 	}
 
-	// Establish p2p connection
-	stream, err := fm.host.NewStream(ctx, pid, protocolID)
-	if err != nil {
-		return err
-	}
-	defer stream.Close()
-
-	// Send file hash to request the specific file
-	if _, err := fmt.Fprintf(stream, "%s\n", fileHash); err != nil {
-		return fmt.Errorf("failed to send file hash: %w", err)
-	}
-	log.Printf("Sent file hash: %s to peer: %s", fileHash, pid)
-
-	// Prepare local file with resume capability
-	localFilePath := filepath.Join(fm.sharedDir, metadata.Name)
-	file, err := os.OpenFile(localFilePath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
-	if err != nil {
-		return err
-	}
-	defer file.Close()
-
-	// Get current file size for resuming
-	currentSize, err := file.Seek(0, io.SeekEnd)
-	if err != nil {
-		return err
-	}
-
-	// Send file hash and current download progress
-	if _, err := fmt.Fprintf(stream, "%s:%d\n", fileHash, currentSize); err != nil {
-		return err
-	}
-
-	// Create progress tracking reader
-	progressReader := &ProgressReader{
-		Reader:  stream,
-		Total:   metadata.Size,
-		Current: currentSize,
-		OnUpdate: func(progress float64) {
-			log.Printf("Download progress: %.2f%%", progress*100)
-		},
-	}
-
-	// Stream download with context cancellation support
-	_, err = io.Copy(file, progressReader)
-	if err != nil {
-		return err
-	}
-
+	log.Printf("Successfully downloaded file and updated sharer list: %s", metadata.Name)
 	return nil
-}
-
-// ProgressReader tracks download progress
-type ProgressReader struct {
-	Reader   io.Reader
-	Total    int64
-	Current  int64
-	OnUpdate func(float64)
 }
 
 func (pr *ProgressReader) Read(p []byte) (int, error) {
@@ -215,6 +239,7 @@ func (pr *ProgressReader) Read(p []byte) (int, error) {
 	}
 	return n, err
 }
+
 func (fm *FileManager) ShareFile(ctx context.Context, filePath string) error {
 	fileInfo, err := os.Stat(filePath)
 	if os.IsNotExist(err) {
@@ -225,29 +250,83 @@ func (fm *FileManager) ShareFile(ctx context.Context, filePath string) error {
 	filename := filepath.Base(filePath)
 	fileSize := fileInfo.Size()
 
-	fileHash, err := utils.GenerateFileHash(filePath)
+	fileCid, err := utils.GenerateFileCID(filePath)
 	if err != nil {
-		return fmt.Errorf("failed to generate file hash: %w", err)
+		return fmt.Errorf("failed to generate file CID: %w", err)
 	}
 
 	// Store metadata with correct file size
-	store_err := fm.storePublicKeyInDHT(ctx, fm.dht, fileHash, FileMetadata{
+	store_err := fm.storeMetadataInDHT(ctx, fm.dht, fileCid, FileMetadata{
 		Name:     filename,
-		Hash:     fileHash,
+		Hash:     fileCid.String(),
 		Size:     fileSize, // Store the ORIGINAL file size, not encrypted file size
-		SharerID: fm.host.ID().String(),
+		SharerID: []string{fm.host.ID().String()},
 	})
 
-	fm.db.AddFileMapping(fileHash, filePath)
+	fm.db.AddFileMapping(fileCid.String(), filePath)
 	if store_err != nil {
 		return fmt.Errorf("failed to store file metadata in DHT: %w", store_err)
 	}
 
 	return nil
 }
+
+func (fm *FileManager) storeMetadataInDHT(ctx context.Context, dht *dht.IpfsDHT, hash cid.Cid, metadata FileMetadata) error {
+	key := fmt.Sprintf("/mobius/%s", hash)
+	metadataBytes, err := json.Marshal(metadata)
+	if err != nil {
+		log.Fatalf("Failed to marshal metadata: %v", err)
+	}
+	// Store in DHT
+	return dht.PutValue(ctx, key, metadataBytes)
+}
+
+func (fm *FileManager) GetFileMetadataFromDHT(ctx context.Context, dht *dht.IpfsDHT, hash cid.Cid) (*FileMetadata, error) {
+	key := fmt.Sprintf("/mobius/%s", hash)
+
+	// Retrieve the metadata from DHT
+	metadataBytes, err := dht.GetValue(ctx, key, routing.Expired)
+	if err != nil {
+		return nil, fmt.Errorf("failed to retrieve metadata from DHT: %v", err)
+	}
+
+	// Unmarshal the bytes into the FileMetadata struct
+	var metadata FileMetadata
+	err = json.Unmarshal(metadataBytes, &metadata)
+	if err != nil {
+		return nil, fmt.Errorf("failed to unmarshal metadata: %v", err)
+	}
+
+	return &metadata, nil
+}
+
 func (fm *FileManager) shareFileWithPeer(ctx context.Context, peerID string, peerInfo *peer.AddrInfo, encryptedFilePath, filename string, key []byte, fileHash string) error {
 	// Send the file without encrypting the key
 	return fm.sendEncryptedFile(ctx, peerID, encryptedFilePath, filename, key, fileHash)
+}
+
+func (fm *FileManager) GetFilePath(ctx context.Context, dht *dht.IpfsDHT, hash string) (string, error) {
+	key := fmt.Sprintf("/mobius/%s", hash)
+
+	// Retrieve the metadata from DHT
+	metadataBytes, err := dht.GetValue(ctx, key)
+	if err != nil {
+		return "", fmt.Errorf("failed to retrieve metadata from DHT: %v", err)
+	}
+
+	// Unmarshal the bytes into the FileMetadata struct
+	var metadata FileMetadata
+	err = json.Unmarshal(metadataBytes, &metadata)
+	if err != nil {
+		return "", fmt.Errorf("failed to unmarshal metadata: %v", err)
+	}
+
+	filepath, file_err := fm.db.GetFilePath(hash)
+	if file_err != nil {
+		return "", fmt.Errorf("failed to retrieve file path: %v", file_err)
+	}
+
+	return filepath, nil
 }
 
 func (fm *FileManager) sendEncryptedFile(ctx context.Context, peerID, encryptedFilePath, filename string, key []byte, fileHash string) error {
@@ -295,57 +374,4 @@ func (fm *FileManager) sendEncryptedFile(ctx context.Context, peerID, encryptedF
 	log.Println("Encrypted file sent successfully")
 
 	return nil
-}
-
-func (fm *FileManager) storePublicKeyInDHT(ctx context.Context, dht *dht.IpfsDHT, hash string, metadata FileMetadata) error {
-	key := fmt.Sprintf("/mobius/%s", hash)
-	metadataBytes, err := json.Marshal(metadata)
-	if err != nil {
-		log.Fatalf("Failed to marshal metadata: %v", err)
-	}
-	// Store in DHT
-	return dht.PutValue(ctx, key, metadataBytes)
-}
-
-func (fm *FileManager) GetFilePath(ctx context.Context, dht *dht.IpfsDHT, hash string) (string, error) {
-	key := fmt.Sprintf("/mobius/%s", hash)
-
-	// Retrieve the metadata from DHT
-	metadataBytes, err := dht.GetValue(ctx, key)
-	if err != nil {
-		return "", fmt.Errorf("failed to retrieve metadata from DHT: %v", err)
-	}
-
-	// Unmarshal the bytes into the FileMetadata struct
-	var metadata FileMetadata
-	err = json.Unmarshal(metadataBytes, &metadata)
-	if err != nil {
-		return "", fmt.Errorf("failed to unmarshal metadata: %v", err)
-	}
-
-	filepath, file_err := fm.db.GetFilePath(hash)
-	if file_err != nil {
-		return "", fmt.Errorf("failed to retrieve file path: %v", file_err)
-	}
-
-	return filepath, nil
-}
-
-func (fm *FileManager) GetFileMetadataFromDHT(ctx context.Context, dht *dht.IpfsDHT, hash string) (*FileMetadata, error) {
-	key := fmt.Sprintf("/mobius/%s", hash)
-
-	// Retrieve the metadata from DHT
-	metadataBytes, err := dht.GetValue(ctx, key)
-	if err != nil {
-		return nil, fmt.Errorf("failed to retrieve metadata from DHT: %v", err)
-	}
-
-	// Unmarshal the bytes into the FileMetadata struct
-	var metadata FileMetadata
-	err = json.Unmarshal(metadataBytes, &metadata)
-	if err != nil {
-		return nil, fmt.Errorf("failed to unmarshal metadata: %v", err)
-	}
-
-	return &metadata, nil
 }

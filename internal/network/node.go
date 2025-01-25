@@ -91,7 +91,7 @@ func InitializeNode(dbpath string) (*dht.IpfsDHT, host.Host, *db.Database, error
 
 	// Bootstrap peers
 	bootstrapPeers := []string{
-		"/ip4/127.0.0.1/tcp/50986/p2p/12D3KooWFEsYCLy8dunv9421WiehkYnQYSgXNAvn1ZqZZzjqWDjm",
+		"/ip4/127.0.0.1/tcp/58968/p2p/12D3KooWJbAM2WHDwmbgP6BFXHy5HtX46t6KsYrxGJSkz8enYxBb",
 	}
 	var addrInfos []peer.AddrInfo
 	for _, addr := range bootstrapPeers {
