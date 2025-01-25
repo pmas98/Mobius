@@ -7,7 +7,9 @@ import (
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/sha256"
+	"crypto/x509"
 	"encoding/base64"
+	"encoding/pem"
 	"errors"
 	"fmt"
 	"io"
@@ -242,4 +244,51 @@ func (cm *CryptoManager) GetKeyForFile(fileHash string) ([]byte, error) {
 		return nil, fmt.Errorf("no encryption key found for file hash: %s", fileHash)
 	}
 	return key, nil
+}
+
+func (cm *CryptoManager) Encrypt(message []byte, publicKeyPEM string) ([]byte, error) {
+	block, _ := pem.Decode([]byte(publicKeyPEM))
+	if block == nil || block.Type != "PUBLIC KEY" {
+		return nil, errors.New("invalid public key PEM")
+	}
+
+	publicKey, err := x509.ParsePKIXPublicKey(block.Bytes)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse public key: %w", err)
+	}
+
+	rsaPublicKey, ok := publicKey.(*rsa.PublicKey)
+	if !ok {
+		return nil, errors.New("key type is not RSA")
+	}
+
+	encryptedMessage, err := rsa.EncryptOAEP(
+		sha256.New(), rand.Reader, rsaPublicKey, message, nil,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to encrypt message: %w", err)
+	}
+
+	return encryptedMessage, nil
+}
+
+func (cm *CryptoManager) Decrypt(encryptedMessage []byte, privateKeyPEM string) ([]byte, error) {
+	block, _ := pem.Decode([]byte(privateKeyPEM))
+	if block == nil || block.Type != "RSA PRIVATE KEY" {
+		return nil, errors.New("invalid private key PEM")
+	}
+
+	privateKey, err := x509.ParsePKCS1PrivateKey(block.Bytes)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse private key: %w", err)
+	}
+
+	decryptedMessage, err := rsa.DecryptOAEP(
+		sha256.New(), rand.Reader, privateKey, encryptedMessage, nil,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to decrypt message: %w", err)
+	}
+
+	return decryptedMessage, nil
 }

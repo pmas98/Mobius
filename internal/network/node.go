@@ -2,10 +2,10 @@ package network
 
 import (
 	"context"
-	"crypto/rand"
 	"encoding/json"
 	"fmt"
 	"mobius/internal/db"
+	"mobius/internal/utils"
 	"time"
 
 	"github.com/ipfs/go-log/v2"
@@ -66,9 +66,13 @@ func InitializeNode(dbpath string) (*dht.IpfsDHT, host.Host, *db.Database, error
 		return nil, nil, nil, fmt.Errorf("failed to initialize database: %w", err)
 	}
 
-	privKey, _, err := crypto.GenerateKeyPairWithReader(crypto.ECDSA, 256, rand.Reader)
+	_, privKeyStr, err := utils.GetOwnKeysFromDisk()
 	if err != nil {
 		panic(err)
+	}
+	privKey, err := crypto.UnmarshalPrivateKey([]byte(privKeyStr))
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("failed to unmarshal private key: %w", err)
 	}
 	h, err := libp2p.New(
 		libp2p.Identity(privKey),
@@ -91,7 +95,7 @@ func InitializeNode(dbpath string) (*dht.IpfsDHT, host.Host, *db.Database, error
 
 	// Bootstrap peers
 	bootstrapPeers := []string{
-		"/ip4/127.0.0.1/tcp/58968/p2p/12D3KooWJbAM2WHDwmbgP6BFXHy5HtX46t6KsYrxGJSkz8enYxBb",
+		"/ip4/127.0.0.1/tcp/51112/p2p/12D3KooWGJiBF8dzg9HR9r77GpH26HmPLfeYWnb2zVHgLQ7mXNiH",
 	}
 	var addrInfos []peer.AddrInfo
 	for _, addr := range bootstrapPeers {

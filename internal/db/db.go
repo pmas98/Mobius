@@ -82,35 +82,42 @@ func (d *Database) GetFilePath(hash string) (string, error) {
 	return filePath, nil
 }
 
-func (d *Database) ValidateFileMappings() {
+func (d *Database) ValidateFileMappings() []string {
 	log.Println("Validating file mappings...")
 
-	rows, err := d.db.Query("SELECT id, file_path FROM file_mapping")
+	// List to store the hash values
+	var hashList []string
+
+	// Query the database for ID, hash, and file_path
+	rows, err := d.db.Query("SELECT id, hash, file_path FROM file_mapping")
 	if err != nil {
 		log.Printf("Error querying file mappings: %v\n", err)
-		return
+		return nil
 	}
 	defer rows.Close()
 
 	for rows.Next() {
 		var id int64
-		var filePath string
-		if err := rows.Scan(&id, &filePath); err != nil {
+		var hash, filePath string
+		if err := rows.Scan(&id, &hash, &filePath); err != nil {
 			log.Printf("Error scanning row: %v\n", err)
 			continue
 		}
 
 		// Check if the file exists
 		if _, err := os.Stat(filePath); os.IsNotExist(err) {
-			log.Printf("File not found for ID %d, path: %s. Removing entry...\n", id, filePath)
-			// Delete the invalid entry
-			_, err := d.db.Exec("DELETE FROM file_mapping WHERE id = ?", id)
-			if err != nil {
-				log.Printf("Error deleting file mapping ID %d: %v\n", id, err)
-			}
+			log.Printf("File not found for ID %d, path: %s.\n", id, filePath)
+			hashList = append(hashList, hash)
 		}
 	}
+
+	// Check for any error in iterating over rows
+	if err := rows.Err(); err != nil {
+		log.Printf("Error iterating over rows: %v\n", err)
+	}
+
 	log.Println("File mapping validation completed.")
+	return hashList
 }
 
 // Close closes the database connection.

@@ -25,25 +25,25 @@ const protocolID = "/mobius/1.0.0"
 
 type FileShare struct {
 	host           host.Host
-	incoming       string
+	download       string
 	mu             sync.RWMutex
 	peers          map[string]bool
 	peerPublicKeys map[string]*rsa.PublicKey // Changed from keys to peerPublicKeys for clarity
 }
 
-func NewFileShare(h host.Host, incomingDir string) *FileShare {
+func NewFileShare(h host.Host, downloadDir string) *FileShare {
 	fs := &FileShare{
 		host:           h,
-		incoming:       incomingDir,
+		download:       downloadDir,
 		peers:          make(map[string]bool),
 		peerPublicKeys: make(map[string]*rsa.PublicKey), // Initialize the peerPublicKeys map
 	}
 
 	// Ensure directories exist
-	os.MkdirAll(incomingDir, 0755)
+	os.MkdirAll(downloadDir, 0755)
 
 	// Set stream handler for receiving files
-	h.SetStreamHandler(protocolID, fs.handleIncomingFile)
+	h.SetStreamHandler(protocolID, fs.handledownloadFile)
 	return fs
 }
 
@@ -114,7 +114,7 @@ func encryptFile(inputPath, outputPath string, key []byte) error {
 	return nil
 }
 
-func (fs *FileShare) handleIncomingFile(s libp2pnetwork.Stream) {
+func (fs *FileShare) handledownloadFile(s libp2pnetwork.Stream) {
 	defer s.Close()
 
 	reader := bufio.NewReader(s)
@@ -135,8 +135,8 @@ func (fs *FileShare) handleIncomingFile(s libp2pnetwork.Stream) {
 	}
 	encryptedKey = encryptedKey[:len(encryptedKey)-1] // Remove newline
 
-	// Create file in incoming directory
-	filepath := filepath.Join(fs.incoming, filename)
+	// Create file in download directory
+	filepath := filepath.Join(fs.download, filename)
 	file, err := os.Create(filepath)
 	if err != nil {
 		log.Printf("Error creating file: %v", err)

@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/rsa"
+	"crypto/x509"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -27,9 +28,19 @@ import (
 )
 
 const (
-	protocolID = "/mobius/1.0.0"
-	rsaKeyBits = 2048
+	fileProtocolID       = "/mobius/1.0.0"
+	messagingProtocolID  = "/mobius/messaging/1.0.0"
+	publickKeyProtocolID = "/mobius/publickey/1.0.0"
+	rsaKeyBits           = 2048
+	ChunkSize            = 1024 * 1024 // 1MB
+	Parallelism          = 4
 )
+
+type ChunkRequest struct {
+	ChunkIndex int
+	Data       []byte
+	Err        error
+}
 
 var (
 	ErrNoPeers           = errors.New("no peers available to share with")
@@ -43,16 +54,18 @@ var (
 )
 
 type FileManager struct {
-	host        host.Host
-	downloadDir string
-	mu          sync.RWMutex
-	peers       map[string]*peer.AddrInfo
-	cryptoMgr   *crypto.CryptoManager
-	keyMap      map[string]FileKeyInfo     // filename -> FileKeyInfo
-	privateKeys map[string]*rsa.PrivateKey // peerID -> private key
-	dht         *dht.IpfsDHT
-	sharedDir   string
-	db          *db.Database
+	host                 host.Host
+	downloadDir          string
+	mu                   sync.RWMutex
+	peers                map[string]*peer.AddrInfo
+	cryptoMgr            *crypto.CryptoManager
+	keyMap               map[string]FileKeyInfo     // filename -> FileKeyInfo
+	privateKeys          map[string]*rsa.PrivateKey // peerID -> private key
+	dht                  *dht.IpfsDHT
+	sharedDir            string
+	db                   *db.Database
+	activeMessageStreams map[string]libp2pnetwork.Stream // peerID -> active stream
+	messageStreamMutex   sync.Mutex
 }
 
 type FileKeyInfo struct {
@@ -82,7 +95,7 @@ func NewFileManager(h host.Host, downloadDir, sharedDir string, cryptoMgr *crypt
 
 	// Create downloadDir directory
 	if err := os.MkdirAll(downloadDir, 0755); err != nil {
-		return nil, fmt.Errorf("failed to create incoming directory: %w", err)
+		return nil, fmt.Errorf("failed to create download directory: %w", err)
 	}
 
 	privateKey, err := rsa.GenerateKey(rand.Reader, rsaKeyBits)
@@ -91,23 +104,219 @@ func NewFileManager(h host.Host, downloadDir, sharedDir string, cryptoMgr *crypt
 	}
 
 	fm := &FileManager{
-		host:        h,
-		downloadDir: downloadDir,
-		cryptoMgr:   cryptoMgr,
-		peers:       make(map[string]*peer.AddrInfo),
-		keyMap:      make(map[string]FileKeyInfo),
-		privateKeys: make(map[string]*rsa.PrivateKey),
-		sharedDir:   sharedDir,
-		dht:         dhtInstance,
-		db:          db,
+		host:                 h,
+		downloadDir:          downloadDir,
+		cryptoMgr:            cryptoMgr,
+		peers:                make(map[string]*peer.AddrInfo),
+		keyMap:               make(map[string]FileKeyInfo),
+		privateKeys:          make(map[string]*rsa.PrivateKey),
+		sharedDir:            sharedDir,
+		dht:                  dhtInstance,
+		db:                   db,
+		activeMessageStreams: make(map[string]libp2pnetwork.Stream),
 	}
 
 	ownPeerID := h.ID().String()
 	fm.privateKeys[ownPeerID] = privateKey
 	fm.cryptoMgr.AddPeerPublicKey(ownPeerID, &privateKey.PublicKey)
 
-	h.SetStreamHandler(protocolID, fm.HandleFileRequest)
+	h.SetStreamHandler(fileProtocolID, fm.HandleFileRequest)
+	h.SetStreamHandler(messagingProtocolID, fm.HandleMessageRequest)
+	h.SetStreamHandler(publickKeyProtocolID, fm.handleKeyExchange)
 	return fm, nil
+}
+
+// InitiateConnection handles the initial connection setup and key exchange with a peer.
+func (fm *FileManager) InitiateConnection(ctx context.Context, peerID string) error {
+	log.Printf("Initiating connection with peer: %s", peerID)
+
+	pid, err := peer.Decode(peerID)
+	if err != nil {
+		log.Printf("Invalid peer ID: %s, error: %v", peerID, err)
+		return fmt.Errorf("invalid peer ID: %w", err)
+	}
+	log.Printf("Decoded peer ID: %s", pid)
+
+	key_exchange_stream, err := fm.host.NewStream(ctx, pid, publickKeyProtocolID)
+	if err != nil {
+		log.Printf("Failed to establish key exchange stream with peer: %s, error: %v", peerID, err)
+		return fmt.Errorf("failed to establish stream: %w", err)
+	}
+	log.Printf("Established key exchange stream with peer: %s", peerID)
+
+	message_stream, err := fm.host.NewStream(ctx, pid, messagingProtocolID)
+	if err != nil {
+		log.Printf("Failed to establish message stream with peer: %s, error: %v", peerID, err)
+		key_exchange_stream.Close()
+		return fmt.Errorf("failed to establish stream: %w", err)
+	}
+	log.Printf("Established message stream with peer: %s", peerID)
+
+	// Perform key exchange
+	err = fm.ExchangeKeys(key_exchange_stream)
+	if err != nil {
+		log.Printf("Key exchange failed with peer: %s, error: %v", peerID, err)
+		message_stream.Close()
+		key_exchange_stream.Close()
+		return fmt.Errorf("key exchange failed: %w", err)
+	}
+	log.Printf("Key exchange successful with peer: %s", peerID)
+
+	// Store the message stream for the peer
+	fm.mu.Lock()
+	fm.activeMessageStreams[peerID] = message_stream
+	fm.mu.Unlock()
+	log.Printf("Stored message stream for peer: %s", peerID)
+
+	log.Printf("Connection and key exchange established with peer %s.", peerID)
+	return nil
+}
+
+func (fm *FileManager) CloseConnection(pid string, stream libp2pnetwork.Stream) {
+	// Get the peer ID from the stream
+	peerID := stream.Conn().RemotePeer().String()
+	peer_stream := fm.activeMessageStreams[peerID]
+	// Log the peer ID
+	log.Printf("Closing connection with peer: %s", peerID)
+
+	if err := peer_stream.Close(); err != nil {
+		log.Printf("Failed to close stream: %v", err)
+	} else {
+		log.Println("Stream closed successfully.")
+	}
+}
+
+// ExchangeKeys exchanges public keys with a peer upon connection.
+func (fm *FileManager) ExchangeKeys(stream libp2pnetwork.Stream) error {
+	defer stream.Close()
+
+	// Send own public key
+	ownPublicKey, _, exists := utils.GetOwnKeysFromDisk()
+	if exists != nil {
+		return fmt.Errorf("no public key found for this peer")
+	}
+
+	_, err := stream.Write([]byte(ownPublicKey))
+	if err != nil {
+		return fmt.Errorf("failed to send public key: %w", err)
+	}
+
+	// Read peer's public key
+	buffer := make([]byte, 1024)
+	n, err := stream.Read(buffer)
+	if err != nil {
+		return fmt.Errorf("failed to read peer's public key: %w", err)
+	}
+
+	peerPublicKey := string(buffer[:n])
+	peerID := stream.Conn().RemotePeer().String()
+
+	// Store the peer's public key
+	utils.StorePeerPublicKey(peerID, peerPublicKey)
+	log.Printf("Public key exchange completed with peer %s.", peerID)
+
+	return nil
+}
+
+func (fm *FileManager) handleKeyExchange(stream libp2pnetwork.Stream) {
+	defer stream.Close()
+
+	// Read the peer's public key
+	buffer := make([]byte, 1024)
+	n, err := stream.Read(buffer)
+	if err != nil {
+		fmt.Errorf("failed to read peer's public key: %w", err)
+	}
+
+	peerPublicKey := string(buffer[:n])
+	peerID := stream.Conn().RemotePeer().String()
+
+	// Store the peer's public key
+	utils.StorePeerPublicKey(peerID, peerPublicKey)
+	log.Printf("Received public key from peer %s.", peerID)
+
+	// Send own public key
+	ownPublicKey, _, exists := utils.GetOwnKeysFromDisk()
+	if exists != nil {
+		fmt.Errorf("no public key found for this peer")
+	}
+
+	_, err = stream.Write([]byte(ownPublicKey))
+	if err != nil {
+		fmt.Errorf("failed to send public key: %w", err)
+	}
+
+	log.Printf("Public key exchange completed with peer %s.", peerID)
+}
+
+// HandleMessageRequest processes incoming messages from a peer.
+func (fm *FileManager) HandleMessageRequest(stream libp2pnetwork.Stream) {
+	peerID := stream.Conn().RemotePeer().String()
+
+	// Handle the messages in a separate goroutine
+	go func() {
+		for {
+			var encryptedMessage []byte
+			buffer := make([]byte, 1024)
+			n, err := stream.Read(buffer)
+			if err == io.EOF {
+				log.Printf("Connection closed by peer %s.", peerID)
+				return
+			}
+			if err != nil {
+				log.Printf("Error reading message from peer %s: %v", peerID, err)
+				return
+			}
+			encryptedMessage = append(encryptedMessage, buffer[:n]...)
+
+			ownPeerID := fm.host.ID().String()
+			privateKey, exists := fm.privateKeys[ownPeerID]
+			if !exists {
+				log.Printf("No private key found for this peer. Unable to decrypt message from %s.", peerID)
+				return
+			}
+
+			privateKeyBytes := x509.MarshalPKCS1PrivateKey(privateKey)
+			decryptedMessage, err := fm.cryptoMgr.Decrypt(encryptedMessage, string(privateKeyBytes))
+			if err != nil {
+				log.Printf("Failed to decrypt message from %s: %v", peerID, err)
+				return
+			}
+
+			log.Printf("Received message from %s: %s.", peerID, string(decryptedMessage))
+		}
+	}()
+}
+
+func (fm *FileManager) GetStreamFromPeerID(peerID string) (libp2pnetwork.Stream, error) {
+	peer, exists := fm.activeMessageStreams[peerID]
+	if !exists {
+		return nil, ErrInvalidPeer
+	}
+
+	return peer, nil
+}
+
+// SendMessage encrypts and sends a message to a specified peer.
+func (fm *FileManager) SendMessage(ctx context.Context, recipientPeerID string, message string, stream libp2pnetwork.Stream) error {
+	peerPublicKey, err := fm.cryptoMgr.GetPeerPublicKey(recipientPeerID)
+	if err != nil {
+		return fmt.Errorf("recipient's public key not found: %w", err)
+	}
+
+	peerPublicKeyBytes := x509.MarshalPKCS1PublicKey(peerPublicKey)
+	encryptedMessage, err := fm.cryptoMgr.Encrypt([]byte(message), string(peerPublicKeyBytes))
+	if err != nil {
+		return fmt.Errorf("failed to encrypt message: %w", err)
+	}
+
+	_, err = stream.Write(encryptedMessage)
+	if err != nil {
+		return fmt.Errorf("failed to send message: %w", err)
+	}
+
+	log.Printf("Message sent to peer %s successfully.", recipientPeerID)
+	return nil
 }
 
 func (fm *FileManager) HandleFileRequest(stream libp2pnetwork.Stream) {
@@ -137,9 +346,32 @@ func (fm *FileManager) HandleFileRequest(stream libp2pnetwork.Stream) {
 	}
 	defer file.Close()
 
-	// Stream file to the requester
-	if _, err = io.Copy(stream, file); err != nil {
-		log.Printf("Failed to send file: %v", err)
+	// Get file size
+	fileInfo, err := file.Stat()
+	if err != nil {
+		log.Printf("Failed to stat file: %v", err)
+		return
+	}
+
+	totalChunks := int((fileInfo.Size() + ChunkSize - 1) / ChunkSize)
+	buffer := make([]byte, ChunkSize)
+	for i := 0; i < totalChunks; i++ {
+		file.Seek(int64(i*ChunkSize), io.SeekStart)
+		n, err := file.Read(buffer)
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			log.Printf("Error reading chunk: %v", err)
+			break
+		}
+		if n > 0 {
+			_, writeErr := stream.Write(buffer[:n])
+			if writeErr != nil {
+				log.Printf("Error writing chunk to stream: %v", writeErr)
+				break
+			}
+		}
 	}
 }
 
@@ -159,7 +391,7 @@ func (fm *FileManager) DownloadFile(ctx context.Context, fileHash cid.Cid) error
 		}
 
 		// Attempt to establish a P2P connection
-		stream, err := fm.host.NewStream(ctx, pid, protocolID)
+		stream, err := fm.host.NewStream(ctx, pid, fileProtocolID)
 		if err != nil {
 			log.Printf("Failed to establish stream with peer: %s, error: %v", sharerID, err)
 			continue
@@ -182,38 +414,34 @@ func (fm *FileManager) DownloadFile(ctx context.Context, fileHash cid.Cid) error
 		}
 		defer file.Close()
 
-		// Get current file size for resuming
-		currentSize, err := file.Seek(0, io.SeekEnd)
-		if err != nil {
-			log.Printf("Failed to seek in local file: %s, error: %v", localFilePath, err)
-			continue
-		}
+		buffer := make([]byte, ChunkSize)
+		totalChunks := int((metadata.Size + ChunkSize - 1) / ChunkSize)
+		for i := 0; i < totalChunks; i++ {
+			n, readErr := stream.Read(buffer)
+			if readErr == io.EOF {
+				break
+			}
+			if readErr != nil {
+				log.Printf("Error reading chunk: %v", readErr)
+				break
+			}
+			if n > 0 {
+				file.Seek(int64(i*ChunkSize), io.SeekStart)
+				file.Write(buffer[:n])
 
-		// Stream download with progress tracking
-		progressReader := &ProgressReader{
-			Reader:  stream,
-			Total:   metadata.Size,
-			Current: currentSize,
-			OnUpdate: func(progress float64) {
-				log.Printf("Download progress from peer %s: %.2f%%", sharerID, progress*100)
-			},
-		}
-
-		if _, err := io.Copy(file, progressReader); err != nil {
-			log.Printf("Failed to download file from peer: %s, error: %v", sharerID, err)
-
-			continue
+				// Print progress
+				fmt.Printf("Progress: %.2f%%\n", (float64(i+1)/float64(totalChunks))*100)
+			}
 		}
 
 		downloadSuccess = true
-		break // Stop attempting after successful download
+		break
 	}
 
 	if !downloadSuccess {
 		return fmt.Errorf("failed to download file from all peers")
 	}
 
-	// Add current peer ID to the SharerID list
 	ownPeerID := fm.host.ID().String()
 	if !utils.StringInSlice(ownPeerID, metadata.SharerID) {
 		metadata.SharerID = append(metadata.SharerID, ownPeerID)
@@ -226,18 +454,6 @@ func (fm *FileManager) DownloadFile(ctx context.Context, fileHash cid.Cid) error
 
 	log.Printf("Successfully downloaded file and updated sharer list: %s", metadata.Name)
 	return nil
-}
-
-func (pr *ProgressReader) Read(p []byte) (int, error) {
-	n, err := pr.Reader.Read(p)
-	if n > 0 {
-		pr.Current += int64(n)
-		if pr.Total > 0 {
-			progress := float64(pr.Current) / float64(pr.Total)
-			pr.OnUpdate(progress)
-		}
-	}
-	return n, err
 }
 
 func (fm *FileManager) ShareFile(ctx context.Context, filePath string) error {
@@ -336,7 +552,7 @@ func (fm *FileManager) sendEncryptedFile(ctx context.Context, peerID, encryptedF
 	}
 	log.Printf("Decoded peer ID: %s to PeerInfo", pid)
 
-	stream, err := fm.host.NewStream(ctx, pid, protocolID)
+	stream, err := fm.host.NewStream(ctx, pid, fileProtocolID)
 	if err != nil {
 		return fmt.Errorf("failed to open stream: %w", err)
 	}
@@ -374,4 +590,16 @@ func (fm *FileManager) sendEncryptedFile(ctx context.Context, peerID, encryptedF
 	log.Println("Encrypted file sent successfully")
 
 	return nil
+}
+
+func (pr *ProgressReader) Read(p []byte) (int, error) {
+	n, err := pr.Reader.Read(p)
+	if n > 0 {
+		pr.Current += int64(n)
+		if pr.Total > 0 {
+			progress := float64(pr.Current) / float64(pr.Total)
+			pr.OnUpdate(progress)
+		}
+	}
+	return n, err
 }

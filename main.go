@@ -17,6 +17,7 @@ import (
 
 func main() {
 	dbPath := "db.sqlite3"
+	const retryLimit = 3
 	dht, node, db, err := network.InitializeNode(dbPath)
 	if err != nil {
 		log.Fatalf("Failed to initialize P2P node: %v", err)
@@ -27,7 +28,7 @@ func main() {
 
 	// Initialize file sharing
 	cryptoMgr := crypto.NewCryptoManager()
-	fileShare, err := file.NewFileManager(node, "incoming", "shared", cryptoMgr, dht, db)
+	fileShare, err := file.NewFileManager(node, "download", "shared", cryptoMgr, dht, db)
 	if err != nil {
 		log.Fatalf("Failed to initialize file manager: %v", err)
 	}
@@ -38,15 +39,39 @@ func main() {
 	fmt.Println("  share [path]      - Share a file")
 	fmt.Println("  get [hash]        - Retrieve file metadata from the DHT")
 	fmt.Println("  download [hash]   - Download a file using its hash")
+	fmt.Println("  connect [peerID]  - Initiate a connection to a peer")
+	fmt.Println("  message [peerID] [message] - Send a message to a peer")
 	fmt.Println("  help              - Show this help message")
 	fmt.Println("  exit              - Exit the program")
 
 	ticker := time.NewTicker(10 * time.Minute)
 	defer ticker.Stop()
-
+	retryTracker := make(map[string]int)
 	go func() {
 		for range ticker.C {
-			db.ValidateFileMappings()
+			hashList := db.ValidateFileMappings()
+			for _, hash := range hashList {
+				// Check if retry limit is reached
+				if retries, exists := retryTracker[hash]; exists && retries >= retryLimit {
+					log.Printf("Max retry attempts reached for hash %s. Skipping.\n", hash)
+					continue
+				}
+
+				cid, err := cid.Decode(hash)
+				if err != nil {
+					log.Printf("Error decoding hash %s: %v\n", hash, err)
+					continue
+				}
+
+				err = fileShare.DownloadFile(context.Background(), cid)
+				if err != nil {
+					log.Printf("Error downloading file with hash %s: %v\n", hash, err)
+					retryTracker[hash]++
+				} else {
+					log.Printf("File downloaded successfully for hash: %s\n", hash)
+					delete(retryTracker, hash) // Reset retry tracker on success
+				}
+			}
 		}
 	}()
 
@@ -121,12 +146,46 @@ func main() {
 				fmt.Printf("File downloaded successfully for hash: %s\n", hash)
 			}
 
+		case "connect":
+			if len(parts) < 2 {
+				fmt.Println("Usage: connect [peerID]")
+				continue
+			}
+			peerID := parts[1]
+			err := fileShare.InitiateConnection(context.Background(), peerID)
+			if err != nil {
+				fmt.Printf("Error connecting to peer %s: %v\n", peerID, err)
+			} else {
+				fmt.Printf("Connected to peer %s\n", peerID)
+			}
+
+		case "message":
+			if len(parts) < 3 {
+				fmt.Println("Usage: message [peerID] [message]")
+				continue
+			}
+			peerID := parts[1]
+			message := strings.Join(parts[2:], " ")
+			stream, stream_err := fileShare.GetStreamFromPeerID(peerID)
+			if stream_err != nil {
+				fmt.Printf("Error getting stream for peer %s: %v\n", peerID, err)
+				continue
+			}
+			err := fileShare.SendMessage(context.Background(), peerID, message, stream)
+			if err != nil {
+				fmt.Printf("Error sending message to peer %s: %v\n", peerID, err)
+			} else {
+				fmt.Printf("Message sent to peer %s: %s\n", peerID, message)
+			}
+
 		case "help":
 			fmt.Println("Available commands:")
 			fmt.Println("  id                - Display your peer ID")
 			fmt.Println("  share [path]      - Share a file")
 			fmt.Println("  get [hash]        - Retrieve file metadata from the DHT")
 			fmt.Println("  download [hash]   - Download a file using its hash")
+			fmt.Println("  connect [peerID]  - Initiate a connection to a peer")
+			fmt.Println("  message [peerID] [message] - Send a message to a peer")
 			fmt.Println("  help              - Show this help message")
 			fmt.Println("  exit              - Exit the program")
 

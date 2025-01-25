@@ -4,12 +4,32 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io/ioutil"
 	"log"
+	"net/http"
 
 	"github.com/libp2p/go-libp2p"
 	dht "github.com/libp2p/go-libp2p-kad-dht"
 	record "github.com/libp2p/go-libp2p-record"
 )
+
+// Function to get public IP of the EC2 instance
+func getPublicIP() (string, error) {
+	// Request public IP from AWS metadata API
+	resp, err := http.Get("http://169.254.169.254/latest/meta-data/public-ipv4")
+	if err != nil {
+		return "", fmt.Errorf("failed to get public IP: %w", err)
+	}
+	defer resp.Body.Close()
+
+	// Read the response body
+	ip, err := ioutil.ReadAll(resp.Body)
+	if err != nil {
+		return "", fmt.Errorf("failed to read response body: %w", err)
+	}
+
+	return string(ip), nil
+}
 
 type FileMetadataValidator struct{}
 type FileMetadata struct {
@@ -22,28 +42,22 @@ type FileMetadata struct {
 }
 
 func (v *FileMetadataValidator) Select(key string, values [][]byte) (int, error) {
-	// Implement selection logic if needed, for now, just return the first value
 	return 0, nil
 }
 
 func (v *FileMetadataValidator) Validate(key string, value []byte) error {
-	// Ensure the key has the correct format
 	if len(key) < 10 {
 		return fmt.Errorf("invalid key: too short")
 	}
-
-	// Ensure the value (metadata) is not empty
 	if len(value) == 0 {
 		return fmt.Errorf("invalid value: empty")
 	}
 
-	// Try to unmarshal the value as JSON to ensure it's valid metadata
 	var metadata FileMetadata
 	if err := json.Unmarshal(value, &metadata); err != nil {
 		return fmt.Errorf("invalid metadata format: %v", err)
 	}
 
-	// Additional validation logic (e.g., check file size, name, etc.)
 	if metadata.Size <= 0 {
 		return fmt.Errorf("invalid file size")
 	}
@@ -51,8 +65,14 @@ func (v *FileMetadataValidator) Validate(key string, value []byte) error {
 }
 
 func createBootstrapPeer() error {
+	// Get the public IP of the EC2 instance
+	ipAddress, err := getPublicIP()
+	if err != nil {
+		return fmt.Errorf("failed to get public IP: %w", err)
+	}
+
 	// Create a basic libp2p host
-	host, err := libp2p.New()
+	host, err := libp2p.New(libp2p.ListenAddrStrings("/ip4/0.0.0.0/tcp/4000"))
 	if err != nil {
 		return fmt.Errorf("failed to create libp2p node: %w", err)
 	}
@@ -60,7 +80,7 @@ func createBootstrapPeer() error {
 
 	// Set up a DHT with a custom validator for the "mobius" namespace
 	validatorMap := record.NamespacedValidator{
-		"mobius": &FileMetadataValidator{}, // Use the custom file metadata validator
+		"mobius": &FileMetadataValidator{},
 	}
 
 	// Creating DHT instance
@@ -69,8 +89,8 @@ func createBootstrapPeer() error {
 		return fmt.Errorf("failed to create DHT: %w", err)
 	}
 
-	// Get the multiaddress of this peer
-	multiaddr := host.Addrs()[0] // Just using the first address
+	// Create the multiaddress using the EC2 public IP
+	multiaddr := fmt.Sprintf("/ip4/%s/tcp/4000", ipAddress)
 	peerID := host.ID()
 
 	// Print out the peer ID and multiaddress
