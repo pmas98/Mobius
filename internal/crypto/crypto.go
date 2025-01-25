@@ -51,14 +51,38 @@ func (cm *CryptoManager) AddPeerPublicKey(peerID string, key *rsa.PublicKey) {
 }
 
 func (cm *CryptoManager) GetPeerPublicKey(peerID string) (*rsa.PublicKey, error) {
-	cm.mu.RLock()
-	defer cm.mu.RUnlock()
+	keyDir := "keys"
+	keyFile := fmt.Sprintf("%s/%s.pub", keyDir, peerID)
 
-	publicKey, exists := cm.peerPublicKeys[peerID]
-	if !exists {
-		return nil, fmt.Errorf("public key for peer %s not found", peerID)
+	// Read the public key from the file
+	keyData, err := os.ReadFile(keyFile)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read public key for peer %s: %w", peerID, err)
 	}
-	return publicKey, nil
+
+	log.Printf("Key file content for peer %s: %s", peerID, keyData)
+
+	// Parse the PEM-encoded public key
+	block, _ := pem.Decode(keyData)
+	if block == nil || block.Type != "PUBLIC KEY" {
+		return nil, fmt.Errorf("invalid public key format for peer %s", peerID)
+	}
+
+	log.Printf("Decoded PEM block: %+v", block)
+
+	pubKey, err := x509.ParsePKIXPublicKey(block.Bytes)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse public key for peer %s: %w", peerID, err)
+	}
+
+	log.Printf("Parsed public key type: %T", pubKey)
+
+	rsaPubKey, ok := pubKey.(*rsa.PublicKey)
+	if !ok {
+		return nil, fmt.Errorf("public key for peer %s is not an RSA key", peerID)
+	}
+
+	return rsaPubKey, nil
 }
 
 // GenerateRandomBytes generates cryptographically secure random bytes

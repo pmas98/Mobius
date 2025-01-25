@@ -1,16 +1,19 @@
 package utils
 
 import (
+	"crypto/ecdsa"
+	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/sha256"
+	"crypto/x509"
 	"encoding/gob"
+	"encoding/pem"
 	"fmt"
 	"io"
 	"os"
 	"strings"
 
 	"github.com/ipfs/go-cid"
-	"github.com/libp2p/go-libp2p/core/crypto"
 	libp2pnetwork "github.com/libp2p/go-libp2p/core/network"
 	"github.com/mr-tron/base58"
 	"github.com/multiformats/go-multihash"
@@ -160,23 +163,34 @@ func GenerateFileCID(filePath string) (cid.Cid, error) {
 	return fileCid, nil
 }
 
+// GenerateNewKeyPair generates an ECDSA key pair and returns PEM-encoded public and private keys.
 func GenerateNewKeyPair() (string, string, error) {
-	privateKey, publicKey, err := crypto.GenerateKeyPairWithReader(crypto.ECDSA, 256, rand.Reader)
+	privateKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
 		return "", "", fmt.Errorf("failed to generate key pair: %w", err)
 	}
 
-	publicKeyBytes, err := crypto.MarshalPublicKey(publicKey)
-	if err != nil {
-		return "", "", fmt.Errorf("failed to encode public key: %w", err)
-	}
-
-	privateKeyBytes, err := crypto.MarshalPrivateKey(privateKey)
+	// Marshal private key to PEM
+	privateKeyBytes, err := x509.MarshalECPrivateKey(privateKey)
 	if err != nil {
 		return "", "", fmt.Errorf("failed to encode private key: %w", err)
 	}
+	privateKeyPEM := pem.EncodeToMemory(&pem.Block{
+		Type:  "EC PRIVATE KEY",
+		Bytes: privateKeyBytes,
+	})
 
-	return string(publicKeyBytes), string(privateKeyBytes), nil
+	// Marshal public key to PEM
+	publicKeyBytes, err := x509.MarshalPKIXPublicKey(&privateKey.PublicKey)
+	if err != nil {
+		return "", "", fmt.Errorf("failed to encode public key: %w", err)
+	}
+	publicKeyPEM := pem.EncodeToMemory(&pem.Block{
+		Type:  "PUBLIC KEY",
+		Bytes: publicKeyBytes,
+	})
+
+	return string(publicKeyPEM), string(privateKeyPEM), nil
 }
 
 func GetOwnKeysFromDisk() (string, string, error) {

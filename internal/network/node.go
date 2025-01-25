@@ -77,7 +77,7 @@ func InitializeNode(dbpath string) (*dht.IpfsDHT, host.Host, *db.Database, error
 	h, err := libp2p.New(
 		libp2p.Identity(privKey),
 		libp2p.DefaultTransports,
-		libp2p.DefaultListenAddrs,
+		libp2p.ListenAddrStrings("/ip4/0.0.0.0/tcp/4000"), // Listen on all interfaces, port 4000
 		libp2p.EnableNATService(),
 	)
 	if err != nil {
@@ -95,7 +95,7 @@ func InitializeNode(dbpath string) (*dht.IpfsDHT, host.Host, *db.Database, error
 
 	// Bootstrap peers
 	bootstrapPeers := []string{
-		"/ip4/127.0.0.1/tcp/4000/p2p/12D3KooWMfH8qXWRVqdfJYiAerKipVL8xj8ktBNPPpCbSgtuLTKz",
+		"/ip4/34.228.194.95/tcp/4000/p2p/12D3KooWR8tQzNk3ikieSseyrArm1rhWY7Hpww1Vmax5W6jhrc6c",
 	}
 	var addrInfos []peer.AddrInfo
 	for _, addr := range bootstrapPeers {
