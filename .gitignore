@@ -8,11 +8,7 @@
 *.o
 
 # Go modules and caches
-/go.sum
-/go.mod
 /go-build/
-*.mod
-*.sum
 
 # Directories
 .clj-kondo/
