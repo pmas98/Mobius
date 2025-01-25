@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/json"
 	"fmt"
+	"mobius/internal/db"
 	"time"
 
 	"github.com/ipfs/go-log/v2"
@@ -56,12 +57,16 @@ func (v *FileMetadataValidator) Validate(key string, value []byte) error {
 	return nil
 }
 
-// InitializeNode initializes a libp2p node with Kademlia DHT
-func InitializeNode() (*dht.IpfsDHT, host.Host, error) {
+func InitializeNode(dbpath string) (*dht.IpfsDHT, host.Host, *db.Database, error) {
 	ctx := context.Background()
 
-	privKey, _, err := crypto.GenerateKeyPairWithReader(crypto.ECDSA, 256, rand.Reader)
+	// Step 1: Set up database connection
+	db, err := db.InitializeDB(dbpath)
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("failed to initialize database: %w", err)
+	}
 
+	privKey, _, err := crypto.GenerateKeyPairWithReader(crypto.ECDSA, 256, rand.Reader)
 	if err != nil {
 		panic(err)
 	}
@@ -71,20 +76,22 @@ func InitializeNode() (*dht.IpfsDHT, host.Host, error) {
 		libp2p.DefaultListenAddrs,
 		libp2p.EnableNATService(),
 	)
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("failed to create libp2p host: %w", err)
+	}
 
 	// Set up a DHT with a custom validator for the "file" namespace
 	validatorMap := record.NamespacedValidator{
 		"mobius": &FileMetadataValidator{}, // Use the custom file metadata validator
 	}
-
 	idht, d_err := dht.New(ctx, h, dht.Mode(dht.ModeClient), dht.Validator(validatorMap), dht.ProtocolPrefix("/mobius"))
-
 	if d_err != nil {
-		return nil, nil, fmt.Errorf("failed to create libp2p host: %w", err)
+		return nil, nil, nil, fmt.Errorf("failed to create DHT: %w", d_err)
 	}
 
+	// Bootstrap peers
 	bootstrapPeers := []string{
-		"/ip4/127.0.0.1/tcp/52545/p2p/12D3KooWE1axeDBMnCTedz7w8CWce9kLk7DwyqvtH8VJ8o37KJtn",
+		"/ip4/127.0.0.1/tcp/50986/p2p/12D3KooWFEsYCLy8dunv9421WiehkYnQYSgXNAvn1ZqZZzjqWDjm",
 	}
 	var addrInfos []peer.AddrInfo
 	for _, addr := range bootstrapPeers {
@@ -102,25 +109,20 @@ func InitializeNode() (*dht.IpfsDHT, host.Host, error) {
 	// Connect to bootstrap peers
 	for _, addrInfo := range addrInfos {
 		if err := h.Connect(ctx, addrInfo); err != nil {
-			logger.Fatal("Failed to connect to bootstrap peer %v: %v", addrInfo.ID, err)
+			logger.Fatalf("Failed to connect to bootstrap peer %v: %v", addrInfo.ID, err)
 		} else {
-			fmt.Printf("Connected to bootstrap peer %v", addrInfo.ID)
+			fmt.Printf("Connected to bootstrap peer %v\n", addrInfo.ID)
 		}
 	}
 
 	logger.Info("Node started with addresses:", h.Addrs())
 	logger.Info("Peer ID:", h.ID())
 
-	if err != nil {
-		return nil, nil, fmt.Errorf("failed to create DHT: %w", err)
-	}
-
 	routingDiscovery := routing.NewRoutingDiscovery(idht)
 	go startDiscovery(ctx, h, routingDiscovery)
 
-	return idht, h, nil
+	return idht, h, db, nil
 }
-
 func connectToBootstrapPeers(ctx context.Context, h host.Host, bootstrapPeers []multiaddr.Multiaddr) error {
 	peerInfos := convertToAddrInfo(bootstrapPeers)
 
