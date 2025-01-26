@@ -7,6 +7,7 @@ import (
 	"crypto/rsa"
 	"crypto/x509"
 	"encoding/json"
+	"encoding/pem"
 	"errors"
 	"fmt"
 	"io"
@@ -191,13 +192,16 @@ func (fm *FileManager) ExchangeKeys(stream libp2pnetwork.Stream) error {
 	defer stream.Close()
 
 	// Send own public key
-	ownPublicKey, _, exists := utils.GetOwnKeysFromDisk()
-	if exists != nil {
-		return fmt.Errorf("no public key found for this peer")
+	ownPublicKey, _, err := utils.GetOwnKeysFromDisk()
+	if err != nil {
+		return fmt.Errorf("no public key found for this peer: %w", err)
 	}
 
-	ownPublicKeyBytes, _ := ownPublicKey.Raw()
-	stream.Write(ownPublicKeyBytes)
+	publicKeyRaw, _ := ownPublicKey.Raw()
+
+	if _, err := stream.Write(publicKeyRaw); err != nil {
+		return fmt.Errorf("failed to send public key: %w", err)
+	}
 
 	// Read peer's public key
 	buffer := make([]byte, 1024)
@@ -206,7 +210,11 @@ func (fm *FileManager) ExchangeKeys(stream libp2pnetwork.Stream) error {
 		return fmt.Errorf("failed to read peer's public key: %w", err)
 	}
 
-	peerPublicKey := string(buffer[:n])
+	block, _ := pem.Decode(buffer[:n])
+	if block == nil {
+		return fmt.Errorf("failed to decode peer's public key")
+	}
+	peerPublicKey := string(block.Bytes)
 	peerID := stream.Conn().RemotePeer().String()
 
 	// Store the peer's public key
