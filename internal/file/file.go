@@ -21,6 +21,7 @@ import (
 
 	"github.com/ipfs/go-cid"
 	dht "github.com/libp2p/go-libp2p-kad-dht"
+	crypt "github.com/libp2p/go-libp2p/core/crypto"
 	"github.com/libp2p/go-libp2p/core/host"
 	libp2pnetwork "github.com/libp2p/go-libp2p/core/network"
 	"github.com/libp2p/go-libp2p/core/peer"
@@ -229,7 +230,14 @@ func (fm *FileManager) handleKeyExchange(stream libp2pnetwork.Stream) {
 		log.Printf("Failed to read peer's public key: %v", err)
 		return
 	}
-
+	test, unmarshal_err := crypt.UnmarshalPublicKey(buffer[:n])
+	if unmarshal_err != nil {
+		log.Printf("Failed to unmarshal public key: %v", unmarshal_err)
+		return
+	}
+	pbkeyBytes, _ := test.Raw()
+	pbKeyStr := string(pbkeyBytes)
+	fmt.Printf("Received public key: %s\n", pbKeyStr)
 	peerID := stream.Conn().RemotePeer().String()
 	log.Printf("Received %d bytes of public key from peer %s", n, peerID)
 	utils.StorePeerPublicKey(peerID, string(buffer[:n]))
