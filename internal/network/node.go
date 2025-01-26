@@ -12,7 +12,6 @@ import (
 	"github.com/libp2p/go-libp2p"
 	dht "github.com/libp2p/go-libp2p-kad-dht"
 	record "github.com/libp2p/go-libp2p-record"
-	"github.com/libp2p/go-libp2p/core/crypto"
 	"github.com/libp2p/go-libp2p/core/host"
 	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/libp2p/go-libp2p/p2p/discovery/routing"
@@ -70,10 +69,7 @@ func InitializeNode(dbpath string) (*dht.IpfsDHT, host.Host, *db.Database, error
 	if err != nil {
 		panic(err)
 	}
-	privKey, err := crypto.UnmarshalPrivateKey([]byte(privKeyStr))
-	if err != nil {
-		return nil, nil, nil, fmt.Errorf("failed to unmarshal private key: %w", err)
-	}
+	privKey := privKeyStr
 	h, err := libp2p.New(
 		libp2p.Identity(privKey),
 		libp2p.DefaultTransports,

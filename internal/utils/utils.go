@@ -14,6 +14,7 @@ import (
 	"strings"
 
 	"github.com/ipfs/go-cid"
+	"github.com/libp2p/go-libp2p/core/crypto"
 	libp2pnetwork "github.com/libp2p/go-libp2p/core/network"
 	"github.com/mr-tron/base58"
 	"github.com/multiformats/go-multihash"
@@ -193,48 +194,53 @@ func GenerateNewKeyPair() (string, string, error) {
 	return string(publicKeyPEM), string(privateKeyPEM), nil
 }
 
-func GetOwnKeysFromDisk() (string, string, error) {
+func GetOwnKeysFromDisk() (crypto.PubKey, crypto.PrivKey, error) {
 	publicKeyFile := "keys/pubk.pub"
 	privateKeyFile := "keys/privk.key"
 
 	// Attempt to read the key from disk
 	publicKey, pb_err := os.ReadFile(publicKeyFile)
 	privateKey, pv_err := os.ReadFile(privateKeyFile)
+
 	if pb_err == nil || pv_err == nil {
-		return string(publicKey), string(privateKey), nil
+		privateKeyUnmarshalled, _ := crypto.UnmarshalPrivateKey([]byte(privateKey))
+		publicKeyUnmarshalled, _ := crypto.UnmarshalPublicKey([]byte(publicKey))
+		return publicKeyUnmarshalled, privateKeyUnmarshalled, nil
 	}
 
 	if os.IsNotExist(pv_err) && os.IsNotExist(pb_err) {
 		// Key does not exist, generate a new one
 		newPublicKey, newPrivateKey, genErr := GenerateNewKeyPair()
 		if genErr != nil {
-			return "", "", fmt.Errorf("failed to generate new key pair: %w", genErr)
+			return nil, nil, fmt.Errorf("failed to generate new key pair: %w", genErr)
 		}
 
 		// Ensure the keys directory exists
 		keyDir := "keys"
 		if mkdirErr := os.MkdirAll(keyDir, 0755); mkdirErr != nil {
-			return "", "", fmt.Errorf("failed to create keys directory: %w", mkdirErr)
+			return nil, nil, fmt.Errorf("failed to create keys directory: %w", mkdirErr)
 		}
 
 		// Save the public key
 		saveErr := os.WriteFile(publicKeyFile, []byte(newPublicKey), 0644)
 		if saveErr != nil {
-			return "", "", fmt.Errorf("failed to save public key: %w", saveErr)
+			return nil, nil, fmt.Errorf("failed to save public key: %w", saveErr)
 		}
 
 		// Save the private key (optional, if needed for encryption/decryption)
 		privateKeyFile := fmt.Sprintf("keys/privk.key")
 		savePrivateErr := os.WriteFile(privateKeyFile, []byte(newPrivateKey), 0600)
+		privateKeyUnmarshalled, _ := crypto.UnmarshalPrivateKey([]byte(privateKey))
+		publicKeyUnmarshalled, _ := crypto.UnmarshalPublicKey([]byte(publicKey))
 		if savePrivateErr != nil {
-			return "", "", fmt.Errorf("failed to save private key: %w", savePrivateErr)
+			return nil, nil, fmt.Errorf("failed to save private key: %w", savePrivateErr)
 		}
 
-		return newPublicKey, newPrivateKey, nil
+		return publicKeyUnmarshalled, privateKeyUnmarshalled, nil
 	}
 
 	// Return any other error
-	return "", "", fmt.Errorf("error reading public key for current peer %s: %w", pb_err)
+	return nil, nil, fmt.Errorf("error reading public key for current peer %s: %w", pb_err)
 }
 
 func StorePeerPublicKey(peerID, peerPublicKey string) error {

@@ -196,10 +196,8 @@ func (fm *FileManager) ExchangeKeys(stream libp2pnetwork.Stream) error {
 		return fmt.Errorf("no public key found for this peer")
 	}
 
-	_, err := stream.Write([]byte(ownPublicKey))
-	if err != nil {
-		return fmt.Errorf("failed to send public key: %w", err)
-	}
+	ownPublicKeyBytes, _ := ownPublicKey.Raw()
+	stream.Write(ownPublicKeyBytes)
 
 	// Read peer's public key
 	buffer := make([]byte, 1024)
@@ -240,8 +238,9 @@ func (fm *FileManager) handleKeyExchange(stream libp2pnetwork.Stream) {
 	if exists != nil {
 		fmt.Errorf("no public key found for this peer")
 	}
+	ownPublicKeyBytes, _ := ownPublicKey.Raw()
 
-	_, err = stream.Write([]byte(ownPublicKey))
+	_, err = stream.Write(ownPublicKeyBytes)
 	if err != nil {
 		fmt.Errorf("failed to send public key: %w", err)
 	}
