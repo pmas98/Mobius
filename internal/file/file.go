@@ -19,8 +19,6 @@ import (
 	"mobius/internal/db"
 	"mobius/internal/utils"
 
-	crypt "github.com/libp2p/go-libp2p/core/crypto"
-
 	"github.com/ipfs/go-cid"
 	dht "github.com/libp2p/go-libp2p-kad-dht"
 	"github.com/libp2p/go-libp2p/core/host"
@@ -213,13 +211,9 @@ func (fm *FileManager) ExchangeKeys(stream libp2pnetwork.Stream) error {
 	if err != nil {
 		return fmt.Errorf("failed to read peer's public key: %w", err)
 	}
-	pubkey, err := crypt.UnmarshalPublicKey(buffer[:n])
-	if err != nil {
-		log.Printf("Failed to unmarshal public key: %v", err)
-		return err
-	}
+
 	peerID := stream.Conn().RemotePeer().String()
-	utils.StorePeerPublicKey(peerID, pubkey.Type().String())
+	utils.StorePeerPublicKey(peerID, string(buffer[:n]))
 
 	log.Printf("Public key exchange completed with peer %s.", peerID)
 	return nil
@@ -235,13 +229,10 @@ func (fm *FileManager) handleKeyExchange(stream libp2pnetwork.Stream) {
 		log.Printf("Failed to read peer's public key: %v", err)
 		return
 	}
-	pubkey, err := crypt.UnmarshalPublicKey(buffer[:n])
-	if err != nil {
-		log.Printf("Failed to unmarshal public key: %v", err)
-		return
-	}
+
 	peerID := stream.Conn().RemotePeer().String()
-	utils.StorePeerPublicKey(peerID, pubkey.Type().String())
+	log.Printf("Received %d bytes of public key from peer %s", n, peerID)
+	utils.StorePeerPublicKey(peerID, string(buffer[:n]))
 
 	// Send own public key
 	ownPublicKey, _, err := utils.GetOwnKeysFromDisk()
