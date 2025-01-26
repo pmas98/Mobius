@@ -214,7 +214,17 @@ func (fm *FileManager) ExchangeKeys(stream libp2pnetwork.Stream) error {
 		return fmt.Errorf("failed to read peer's public key: %w", err)
 	}
 
-	pbkeyBytes, unmarshal_err := crypt.UnmarshalRsaPublicKey(buffer[:n])
+	publicKeyPem := pem.EncodeToMemory(&pem.Block{
+		Type:  "PUBLIC KEY",
+		Bytes: buffer[:n],
+	})
+
+	block, _ := pem.Decode([]byte(publicKeyPem))
+	if block == nil {
+		log.Printf("Failed to decode PEM block")
+
+	}
+	pbkeyBytes, unmarshal_err := crypt.UnmarshalRsaPublicKey(block.Bytes)
 	if unmarshal_err != nil {
 		log.Printf("Failed to unmarshal public key: %v", unmarshal_err)
 	}
@@ -242,7 +252,14 @@ func (fm *FileManager) handleKeyExchange(stream libp2pnetwork.Stream) {
 	})
 
 	fmt.Printf("Public key: %v\n", string(publicKeyPem))
-	pbkeyBytes, err := crypt.UnmarshalRsaPublicKey(publicKeyPem)
+
+	block, _ := pem.Decode([]byte(publicKeyPem))
+	if block == nil {
+		log.Printf("Failed to decode PEM block")
+		return
+	}
+
+	pbkeyBytes, err := crypt.UnmarshalRsaPublicKey(block.Bytes)
 	if err != nil {
 		log.Printf("Failed to unmarshal public key: %v", err)
 		return
