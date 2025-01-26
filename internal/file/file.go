@@ -197,8 +197,17 @@ func (fm *FileManager) ExchangeKeys(stream libp2pnetwork.Stream) error {
 		return fmt.Errorf("no public key found for this peer: %w", err)
 	}
 
-	publicKeyRaw, _ := ownPublicKey.Raw()
+	if ownPublicKey == nil {
+		return fmt.Errorf("public key is nil")
+	}
 
+	fmt.Println("Public key found for this peer.")
+
+	publicKeyRaw, err := ownPublicKey.Raw()
+	if err != nil {
+		return fmt.Errorf("failed to get raw public key: %w", err)
+	}
+	fmt.Println("Public key raw:", publicKeyRaw)
 	if _, err := stream.Write(publicKeyRaw); err != nil {
 		return fmt.Errorf("failed to send public key: %w", err)
 	}

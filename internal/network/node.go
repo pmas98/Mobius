@@ -67,6 +67,7 @@ func InitializeNode(dbpath string) (*dht.IpfsDHT, host.Host, *db.Database, error
 
 	_, privKeyStr, err := utils.GetOwnKeysFromDisk()
 	if err != nil {
+		fmt.Println("Following error occured while getting keys from disk: ", err)
 		panic(err)
 	}
 	privKey := privKeyStr
