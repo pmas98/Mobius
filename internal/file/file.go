@@ -213,7 +213,7 @@ func (fm *FileManager) ExchangeKeys(stream libp2pnetwork.Stream) error {
 		return fmt.Errorf("failed to read peer's public key: %w", err)
 	}
 
-	pbkeyBytes, unmarshal_err := crypt.UnmarshalPublicKey(buffer[:n])
+	pbkeyBytes, unmarshal_err := crypt.UnmarshalRsaPublicKey(buffer[:n])
 	if unmarshal_err != nil {
 		log.Printf("Failed to unmarshal public key: %v", unmarshal_err)
 	}
@@ -235,7 +235,7 @@ func (fm *FileManager) handleKeyExchange(stream libp2pnetwork.Stream) {
 		return
 	}
 
-	pbkeyBytes, err := crypt.UnmarshalPublicKey(buffer[:n])
+	pbkeyBytes, err := crypt.UnmarshalRsaPublicKey(buffer[:n])
 	if err != nil {
 		log.Printf("Failed to unmarshal public key: %v", err)
 		return
@@ -317,13 +317,12 @@ func (fm *FileManager) GetStreamFromPeerID(peerID string) (libp2pnetwork.Stream,
 
 // SendMessage encrypts and sends a message to a specified peer.
 func (fm *FileManager) SendMessage(ctx context.Context, recipientPeerID string, message string, stream libp2pnetwork.Stream) error {
-	peerPublicKey, err := fm.cryptoMgr.GetPeerPublicKey(recipientPeerID)
+	peerPublicKeyBytes, err := fm.cryptoMgr.GetPeerPublicKey(recipientPeerID)
 	if err != nil {
 		return fmt.Errorf("recipient's public key not found: %w", err)
 	}
 
-	peerPublicKeyBytes := x509.MarshalPKCS1PublicKey(peerPublicKey)
-	encryptedMessage, err := fm.cryptoMgr.Encrypt([]byte(message), string(peerPublicKeyBytes))
+	encryptedMessage, err := fm.cryptoMgr.Encrypt([]byte(message), peerPublicKeyBytes)
 	if err != nil {
 		return fmt.Errorf("failed to encrypt message: %w", err)
 	}

@@ -1,9 +1,8 @@
 package utils
 
 import (
-	"crypto/ecdsa"
-	"crypto/elliptic"
 	"crypto/rand"
+	"crypto/rsa"
 	"crypto/sha256"
 	"crypto/x509"
 	"encoding/gob"
@@ -165,33 +164,31 @@ func GenerateFileCID(filePath string) (cid.Cid, error) {
 }
 
 // GenerateNewKeyPair generates an ECDSA key pair and returns PEM-encoded public and private keys.
-func GenerateNewKeyPair() (string, string, error) {
-	privateKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+func GenerateNewKeyPair() ([]byte, []byte, error) {
+	// Generate RSA key pair with 2048-bit key length
+	privateKey, err := rsa.GenerateKey(rand.Reader, 2048)
 	if err != nil {
-		return "", "", fmt.Errorf("failed to generate key pair: %w", err)
+		return nil, nil, fmt.Errorf("failed to generate key pair: %w", err)
 	}
 
 	// Marshal private key to PEM
-	privateKeyBytes, err := x509.MarshalECPrivateKey(privateKey)
-	if err != nil {
-		return "", "", fmt.Errorf("failed to encode private key: %w", err)
-	}
+	privateKeyBytes := x509.MarshalPKCS1PrivateKey(privateKey)
 	privateKeyPEM := pem.EncodeToMemory(&pem.Block{
-		Type:  "EC PRIVATE KEY",
+		Type:  "RSA PRIVATE KEY",
 		Bytes: privateKeyBytes,
 	})
 
 	// Marshal public key to PEM
 	publicKeyBytes, err := x509.MarshalPKIXPublicKey(&privateKey.PublicKey)
 	if err != nil {
-		return "", "", fmt.Errorf("failed to encode public key: %w", err)
+		return nil, nil, fmt.Errorf("failed to encode public key: %w", err)
 	}
 	publicKeyPEM := pem.EncodeToMemory(&pem.Block{
 		Type:  "PUBLIC KEY",
 		Bytes: publicKeyBytes,
 	})
 
-	return string(publicKeyPEM), string(privateKeyPEM), nil
+	return publicKeyPEM, privateKeyPEM, nil
 }
 
 func GetOwnKeysFromDisk() (crypto.PubKey, crypto.PrivKey, error) {
@@ -210,27 +207,17 @@ func GetOwnKeysFromDisk() (crypto.PubKey, crypto.PrivKey, error) {
 			return nil, nil, fmt.Errorf("failed to decode keys")
 		}
 
-		// Parse private key
-		privkey, err_priv := x509.ParseECPrivateKey(block_priv.Bytes)
-		if err_priv != nil {
-			return nil, nil, fmt.Errorf("failed to parse private key: %v", err_priv)
-		}
-
-		pubKeyTyped, err := crypto.UnmarshalECDSAPublicKey(block_pub.Bytes)
+		pubKeyTyped, err := crypto.UnmarshalRsaPublicKey(block_pub.Bytes)
 		if err != nil {
 			return nil, nil, fmt.Errorf("failed to unmarshal public key: %v", err)
 		}
 
-		privKeyBytes, err := x509.MarshalECPrivateKey(privkey)
+		privKeyBytes, err := crypto.UnmarshalRsaPrivateKey(block_priv.Bytes)
 		if err != nil {
 			return nil, nil, fmt.Errorf("failed to marshal private key: %v", err)
 		}
-		privKeyTyped, err := crypto.UnmarshalECDSAPrivateKey(privKeyBytes)
-		if err != nil {
-			return nil, nil, fmt.Errorf("failed to unmarshal private key: %v", err)
-		}
 
-		return pubKeyTyped, privKeyTyped, nil
+		return pubKeyTyped, privKeyBytes, nil
 	}
 
 	// Keys don't exist, generate new pair
@@ -248,35 +235,27 @@ func GetOwnKeysFromDisk() (crypto.PubKey, crypto.PrivKey, error) {
 		}
 
 		// Save public key
-		if saveErr := os.WriteFile(publicKeyFile, []byte(newPublicKey), 0644); saveErr != nil {
+		if saveErr := os.WriteFile(publicKeyFile, newPublicKey, 0644); saveErr != nil {
 			return nil, nil, fmt.Errorf("failed to save public key: %w", saveErr)
 		}
 
 		// Save private key
-		if savePrivateErr := os.WriteFile(privateKeyFile, []byte(newPrivateKey), 0600); savePrivateErr != nil {
+		if savePrivateErr := os.WriteFile(privateKeyFile, newPrivateKey, 0600); savePrivateErr != nil {
 			return nil, nil, fmt.Errorf("failed to save private key: %w", savePrivateErr)
 		}
 
 		// Unmarshal newly generated keys
-		privateKeyUnmarshalled, privUnmarshalErr := x509.ParseECPrivateKey([]byte(newPrivateKey))
+		privateKeyUnmarshalled, privUnmarshalErr := crypto.UnmarshalRsaPrivateKey(newPrivateKey)
 		if privUnmarshalErr != nil {
 			return nil, nil, fmt.Errorf("failed to unmarshal new private key: %w", privUnmarshalErr)
 		}
 
-		pubKeyTyped, err := crypto.UnmarshalECDSAPublicKey([]byte(newPublicKey))
+		pubKeyTyped, err := crypto.UnmarshalRsaPublicKey(newPublicKey)
 		if err != nil {
 			return nil, nil, fmt.Errorf("failed to unmarshal public key: %v", err)
 		}
 
-		privKeyBytes, err := x509.MarshalECPrivateKey(privateKeyUnmarshalled)
-		if err != nil {
-			return nil, nil, fmt.Errorf("failed to marshal private key: %v", err)
-		}
-		privKeyTyped, err := crypto.UnmarshalECDSAPrivateKey(privKeyBytes)
-		if err != nil {
-			return nil, nil, fmt.Errorf("failed to unmarshal private key: %v", err)
-		}
-		return pubKeyTyped, privKeyTyped, nil
+		return pubKeyTyped, privateKeyUnmarshalled, nil
 	}
 
 	// Return any other error

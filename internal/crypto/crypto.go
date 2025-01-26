@@ -50,9 +50,9 @@ func (cm *CryptoManager) AddPeerPublicKey(peerID string, key *rsa.PublicKey) {
 	cm.peerPublicKeys[peerID] = key
 }
 
-func (cm *CryptoManager) GetPeerPublicKey(peerID string) (*rsa.PublicKey, error) {
+func (cm *CryptoManager) GetPeerPublicKey(peerID string) ([]byte, error) {
 	keyDir := "keys"
-	keyFile := fmt.Sprintf("%s/%s.pub", keyDir, peerID)
+	keyFile := fmt.Sprintf("%s/%s.pem", keyDir, peerID)
 
 	// Read the public key from the file
 	keyData, err := os.ReadFile(keyFile)
@@ -70,19 +70,7 @@ func (cm *CryptoManager) GetPeerPublicKey(peerID string) (*rsa.PublicKey, error)
 
 	log.Printf("Decoded PEM block: %+v", block)
 
-	pubKey, err := x509.ParsePKIXPublicKey(block.Bytes)
-	if err != nil {
-		return nil, fmt.Errorf("failed to parse public key for peer %s: %w", peerID, err)
-	}
-
-	log.Printf("Parsed public key type: %T", pubKey)
-
-	rsaPubKey, ok := pubKey.(*rsa.PublicKey)
-	if !ok {
-		return nil, fmt.Errorf("public key for peer %s is not an RSA key", peerID)
-	}
-
-	return rsaPubKey, nil
+	return block.Bytes, nil
 }
 
 // GenerateRandomBytes generates cryptographically secure random bytes
@@ -270,8 +258,8 @@ func (cm *CryptoManager) GetKeyForFile(fileHash string) ([]byte, error) {
 	return key, nil
 }
 
-func (cm *CryptoManager) Encrypt(message []byte, publicKeyPEM string) ([]byte, error) {
-	block, _ := pem.Decode([]byte(publicKeyPEM))
+func (cm *CryptoManager) Encrypt(message []byte, publicKeyPEM []byte) ([]byte, error) {
+	block, _ := pem.Decode(publicKeyPEM)
 	if block == nil || block.Type != "PUBLIC KEY" {
 		return nil, errors.New("invalid public key PEM")
 	}
@@ -283,12 +271,11 @@ func (cm *CryptoManager) Encrypt(message []byte, publicKeyPEM string) ([]byte, e
 
 	rsaPublicKey, ok := publicKey.(*rsa.PublicKey)
 	if !ok {
-		return nil, errors.New("key type is not RSA")
+		return nil, errors.New("not an RSA public key")
 	}
 
-	encryptedMessage, err := rsa.EncryptOAEP(
-		sha256.New(), rand.Reader, rsaPublicKey, message, nil,
-	)
+	// Use RSA-OAEP encryption
+	encryptedMessage, err := rsa.EncryptOAEP(sha256.New(), rand.Reader, rsaPublicKey, message, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to encrypt message: %w", err)
 	}
