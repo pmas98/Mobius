@@ -3,8 +3,6 @@ package file
 import (
 	"bufio"
 	"context"
-	"crypto/rand"
-	"crypto/rsa"
 	"crypto/x509"
 	"encoding/json"
 	"encoding/pem"
@@ -22,6 +20,7 @@ import (
 
 	"github.com/ipfs/go-cid"
 	dht "github.com/libp2p/go-libp2p-kad-dht"
+	crypt "github.com/libp2p/go-libp2p/core/crypto"
 	"github.com/libp2p/go-libp2p/core/host"
 	libp2pnetwork "github.com/libp2p/go-libp2p/core/network"
 	"github.com/libp2p/go-libp2p/core/peer"
@@ -60,13 +59,13 @@ type FileManager struct {
 	mu                   sync.RWMutex
 	peers                map[string]*peer.AddrInfo
 	cryptoMgr            *crypto.CryptoManager
-	keyMap               map[string]FileKeyInfo     // filename -> FileKeyInfo
-	privateKeys          map[string]*rsa.PrivateKey // peerID -> private key
+	keyMap               map[string]FileKeyInfo // filename -> FileKeyInfo
 	dht                  *dht.IpfsDHT
 	sharedDir            string
 	db                   *db.Database
 	activeMessageStreams map[string]libp2pnetwork.Stream // peerID -> active stream
 	messageStreamMutex   sync.Mutex
+	privateKey           crypt.PrivKey
 }
 
 type FileKeyInfo struct {
@@ -99,27 +98,17 @@ func NewFileManager(h host.Host, downloadDir, sharedDir string, cryptoMgr *crypt
 		return nil, fmt.Errorf("failed to create download directory: %w", err)
 	}
 
-	privateKey, err := rsa.GenerateKey(rand.Reader, rsaKeyBits)
-	if err != nil {
-		return nil, fmt.Errorf("failed to generate private key: %w", err)
-	}
-
 	fm := &FileManager{
 		host:                 h,
 		downloadDir:          downloadDir,
 		cryptoMgr:            cryptoMgr,
 		peers:                make(map[string]*peer.AddrInfo),
 		keyMap:               make(map[string]FileKeyInfo),
-		privateKeys:          make(map[string]*rsa.PrivateKey),
 		sharedDir:            sharedDir,
 		dht:                  dhtInstance,
 		db:                   db,
 		activeMessageStreams: make(map[string]libp2pnetwork.Stream),
 	}
-
-	ownPeerID := h.ID().String()
-	fm.privateKeys[ownPeerID] = privateKey
-	fm.cryptoMgr.AddPeerPublicKey(ownPeerID, &privateKey.PublicKey)
 
 	h.SetStreamHandler(fileProtocolID, fm.HandleFileRequest)
 	h.SetStreamHandler(messagingProtocolID, fm.HandleMessageRequest)
@@ -192,10 +181,12 @@ func (fm *FileManager) ExchangeKeys(stream libp2pnetwork.Stream) error {
 	defer stream.Close()
 
 	// Send own public key
-	ownPublicKey, _, err := utils.GetOwnKeysFromDisk()
+	ownPublicKey, ownPrivateKey, err := utils.GetOwnKeysFromDisk()
 	if err != nil {
 		return fmt.Errorf("no public key found: %w", err)
 	}
+
+	fm.privateKey = ownPrivateKey
 
 	publicKeyRaw, err := x509.MarshalPKIXPublicKey(ownPublicKey)
 	if err != nil {
@@ -288,7 +279,7 @@ func (fm *FileManager) HandleMessageRequest(stream libp2pnetwork.Stream) {
 	go func() {
 		for {
 			var encryptedMessage []byte
-			buffer := make([]byte, 1024)
+			buffer := make([]byte, 4096)
 			n, err := stream.Read(buffer)
 			if err == io.EOF {
 				log.Printf("Connection closed by peer %s.", peerID)
@@ -300,15 +291,14 @@ func (fm *FileManager) HandleMessageRequest(stream libp2pnetwork.Stream) {
 			}
 			encryptedMessage = append(encryptedMessage, buffer[:n]...)
 
-			ownPeerID := fm.host.ID().String()
-			privateKey, exists := fm.privateKeys[ownPeerID]
-			if !exists {
-				log.Printf("No private key found for this peer. Unable to decrypt message from %s.", peerID)
+			privateKey := fm.privateKey
+			privateKeyRaw, err := privateKey.Raw()
+			if err != nil {
+				log.Printf("Failed to get raw private key: %v", err)
 				return
 			}
 
-			privateKeyBytes := x509.MarshalPKCS1PrivateKey(privateKey)
-			decryptedMessage, err := fm.cryptoMgr.Decrypt(encryptedMessage, string(privateKeyBytes))
+			decryptedMessage, err := fm.cryptoMgr.Decrypt(encryptedMessage, privateKeyRaw)
 			if err != nil {
 				log.Printf("Failed to decrypt message from %s: %v", peerID, err)
 				return

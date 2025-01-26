@@ -277,8 +277,8 @@ func (cm *CryptoManager) Encrypt(message []byte, publicKeyPEM *pem.Block) ([]byt
 	return encryptedMessage, nil
 }
 
-func (cm *CryptoManager) Decrypt(encryptedMessage []byte, privateKeyPEM string) ([]byte, error) {
-	block, _ := pem.Decode([]byte(privateKeyPEM))
+func (cm *CryptoManager) Decrypt(encryptedMessage []byte, privateKeyPEM []byte) ([]byte, error) {
+	block, _ := pem.Decode(privateKeyPEM)
 	if block == nil || block.Type != "RSA PRIVATE KEY" {
 		return nil, errors.New("invalid private key PEM")
 	}
