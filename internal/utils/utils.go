@@ -192,6 +192,22 @@ func GenerateNewKeyPair() (string, string, error) {
 	return string(publicKeyPEM), string(privateKeyPEM), nil
 }
 
+func GetPrivateKeyBlock() (*pem.Block, error) {
+	// Read the private key from the file
+	keyData, err := os.ReadFile("keys/privk.pem")
+	if err != nil {
+		fmt.Println(err)
+	}
+
+	// Parse the PEM-encoded private key
+	block, _ := pem.Decode(keyData)
+	if block == nil || block.Type != "RSA PRIVATE KEY" {
+		fmt.Println("invalid private key format")
+	}
+
+	return block, nil
+}
+
 func GetOwnKeysFromDisk() (any, crypto.PrivKey, error) {
 	publicKeyFile := "keys/pubk.pem"
 	privateKeyFile := "keys/privk.pem"

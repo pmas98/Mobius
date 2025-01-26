@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"mobius/internal/utils"
 	"os"
 	"sync"
 )
@@ -277,11 +278,8 @@ func (cm *CryptoManager) Encrypt(message []byte, publicKeyPEM *pem.Block) ([]byt
 	return encryptedMessage, nil
 }
 
-func (cm *CryptoManager) Decrypt(encryptedMessage []byte, privateKeyPEM []byte) ([]byte, error) {
-	block, _ := pem.Decode(privateKeyPEM)
-	if block == nil || block.Type != "RSA PRIVATE KEY" {
-		return nil, errors.New("invalid private key PEM")
-	}
+func (cm *CryptoManager) Decrypt(encryptedMessage []byte) ([]byte, error) {
+	block, _ := utils.GetPrivateKeyBlock()
 
 	privateKey, err := x509.ParsePKCS1PrivateKey(block.Bytes)
 	if err != nil {

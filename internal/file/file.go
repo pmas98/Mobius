@@ -283,14 +283,7 @@ func (fm *FileManager) HandleMessageRequest(stream libp2pnetwork.Stream) {
 			}
 			encryptedMessage = append(encryptedMessage, buffer[:n]...)
 
-			privateKey := fm.privateKey
-			privateKeyRaw, err := privateKey.Raw()
-			if err != nil {
-				log.Printf("Failed to get raw private key: %v", err)
-				return
-			}
-
-			decryptedMessage, err := fm.cryptoMgr.Decrypt(encryptedMessage, privateKeyRaw)
+			decryptedMessage, err := fm.cryptoMgr.Decrypt(encryptedMessage)
 			if err != nil {
 				log.Printf("Failed to decrypt message from %s: %v", peerID, err)
 				return
