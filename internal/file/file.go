@@ -218,7 +218,7 @@ func (fm *FileManager) ExchangeKeys(stream libp2pnetwork.Stream) error {
 		log.Printf("Failed to unmarshal public key: %v", unmarshal_err)
 	}
 	peerID := stream.Conn().RemotePeer().String()
-	utils.StorePeerPublicKey(peerID, pbkeyBytes.Type().String())
+	utils.StorePeerPublicKey(peerID, pbkeyBytes)
 
 	log.Printf("Public key exchange completed with peer %s.", peerID)
 	return nil
@@ -244,7 +244,7 @@ func (fm *FileManager) handleKeyExchange(stream libp2pnetwork.Stream) {
 
 	peerID := stream.Conn().RemotePeer().String()
 	log.Printf("Received %d bytes of public key from peer %s", n, peerID)
-	utils.StorePeerPublicKey(peerID, pbkeyBytes.Type().String())
+	utils.StorePeerPublicKey(peerID, pbkeyBytes)
 
 	// Send own public key
 	ownPublicKey, _, err := utils.GetOwnKeysFromDisk()
