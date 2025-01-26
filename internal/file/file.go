@@ -208,7 +208,7 @@ func (fm *FileManager) ExchangeKeys(stream libp2pnetwork.Stream) error {
 	}
 
 	// Read peer's public key
-	buffer := make([]byte, 1024)
+	buffer := make([]byte, 4096)
 	n, err := stream.Read(buffer)
 	if err != nil {
 		return fmt.Errorf("failed to read peer's public key: %w", err)
