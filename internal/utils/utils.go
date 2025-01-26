@@ -276,26 +276,11 @@ func GetOwnKeysFromDisk() (crypto.PubKey, crypto.PrivKey, error) {
 	// Return any other error
 	return nil, nil, fmt.Errorf("error reading keys from disk: %v, %v", pbErr, pvErr)
 }
-func StorePeerPublicKey(peerID string, pubKey *rsa.PublicKey) error {
+func StorePeerPublicKey(peerID string, pubKey []byte) error {
 	keyDir := "keys"
 	keyFile := fmt.Sprintf("%s/%s.pem", keyDir, peerID)
 
-	fmt.Println("Got here")
-
-	pubKeyBytes, err := x509.MarshalPKIXPublicKey(pubKey)
-	if err != nil {
-		return fmt.Errorf("failed to marshal public key: %v", err)
-	}
-
-	pemBlock := &pem.Block{
-		Type:  "PUBLIC KEY",
-		Bytes: pubKeyBytes,
-	}
-
-	// Write to file
-	publicKeyPEM := pem.EncodeToMemory(pemBlock)
-	fmt.Printf("The public key is %s", publicKeyPEM)
-	if saveErr := os.WriteFile(keyFile, publicKeyPEM, 0644); saveErr != nil {
+	if saveErr := os.WriteFile(keyFile, pubKey, 0644); saveErr != nil {
 		fmt.Println(saveErr)
 	}
 	return nil
