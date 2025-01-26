@@ -229,7 +229,7 @@ func (fm *FileManager) handleKeyExchange(stream libp2pnetwork.Stream) {
 	defer stream.Close()
 
 	// Read peer's public key
-	buffer := make([]byte, 1024)
+	buffer := make([]byte, 4096)
 	n, err := stream.Read(buffer)
 	if err != nil {
 		log.Printf("Failed to read peer's public key: %v", err)
