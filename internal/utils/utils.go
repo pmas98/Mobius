@@ -207,12 +207,12 @@ func GetOwnKeysFromDisk() (crypto.PubKey, crypto.PrivKey, error) {
 			return nil, nil, fmt.Errorf("failed to decode keys")
 		}
 
-		pubKeyTyped, err := crypto.UnmarshalRsaPublicKey(block_pub.Bytes)
+		pubKeyTyped, err := crypto.UnmarshalPublicKey(block_pub.Bytes)
 		if err != nil {
 			return nil, nil, fmt.Errorf("failed to unmarshal public key: %v", err)
 		}
 
-		privKeyBytes, err := crypto.UnmarshalRsaPrivateKey(block_priv.Bytes)
+		privKeyBytes, err := crypto.UnmarshalPrivateKey(block_priv.Bytes)
 		if err != nil {
 			return nil, nil, fmt.Errorf("failed to marshal private key: %v", err)
 		}

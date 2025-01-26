@@ -201,6 +201,7 @@ func (fm *FileManager) ExchangeKeys(stream libp2pnetwork.Stream) error {
 	if err != nil {
 		return fmt.Errorf("failed to get raw public key: %w", err)
 	}
+	fmt.Printf("Public key: %v\n", string(publicKeyRaw))
 
 	if _, err := stream.Write(publicKeyRaw); err != nil {
 		return fmt.Errorf("failed to send public key: %w", err)
@@ -213,7 +214,7 @@ func (fm *FileManager) ExchangeKeys(stream libp2pnetwork.Stream) error {
 		return fmt.Errorf("failed to read peer's public key: %w", err)
 	}
 
-	pbkeyBytes, unmarshal_err := crypt.UnmarshalRsaPublicKey(buffer[:n])
+	pbkeyBytes, unmarshal_err := crypt.UnmarshalPublicKey(buffer[:n])
 	if unmarshal_err != nil {
 		log.Printf("Failed to unmarshal public key: %v", unmarshal_err)
 	}
@@ -235,7 +236,7 @@ func (fm *FileManager) handleKeyExchange(stream libp2pnetwork.Stream) {
 		return
 	}
 
-	pbkeyBytes, err := crypt.UnmarshalRsaPublicKey(buffer[:n])
+	pbkeyBytes, err := crypt.UnmarshalPublicKey(buffer[:n])
 	if err != nil {
 		log.Printf("Failed to unmarshal public key: %v", err)
 		return
