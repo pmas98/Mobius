@@ -198,69 +198,88 @@ func GetOwnKeysFromDisk() (crypto.PubKey, crypto.PrivKey, error) {
 	publicKeyFile := "keys/pubk.pem"
 	privateKeyFile := "keys/privk.pem"
 
-	fmt.Println("Attempting to read public key from:", publicKeyFile)
-	fmt.Println("Attempting to read private key from:", privateKeyFile)
-
-	// Attempt to read the key from disk
+	// Read key files
 	publicKey, pbErr := os.ReadFile(publicKeyFile)
 	privateKey, pvErr := os.ReadFile(privateKeyFile)
 
+	// Keys exist, attempt to decode
 	if pbErr == nil && pvErr == nil {
-		fmt.Println("Keys found on disk, unmarshalling...")
 		block_pub, _ := pem.Decode(publicKey)
 		block_priv, _ := pem.Decode(privateKey)
-
-		publicKeyBytes, _ := x509.MarshalPKIXPublicKey(block_pub.Bytes)
-		pubkey, _ := crypto.UnmarshalPublicKey(publicKeyBytes)
-
-		privateKeyBytes, _ := x509.MarshalPKCS8PrivateKey(block_priv.Bytes)
-		privkey, _ := crypto.UnmarshalPrivateKey(privateKeyBytes)
-
-		fmt.Println("Successfully unmarshalled keys")
-		return pubkey, privkey, nil
-	}
-
-	if os.IsNotExist(pbErr) && os.IsNotExist(pvErr) {
-		fmt.Println("Keys do not exist, generating new key pair...")
-		// Key does not exist, generate a new one
-		newPublicKey, newPrivateKey, genErr := GenerateNewKeyPair()
-		if genErr != nil {
-			fmt.Println("Failed to generate new key pair:", genErr)
-			return nil, nil, fmt.Errorf("failed to generate new key pair: %w", genErr)
+		if block_pub == nil || block_priv == nil {
+			return nil, nil, fmt.Errorf("failed to decode keys")
 		}
 
-		// Ensure the keys directory exists
+		// Parse private key
+		privkey, err_priv := x509.ParseECPrivateKey(block_priv.Bytes)
+		if err_priv != nil {
+			return nil, nil, fmt.Errorf("failed to parse private key: %v", err_priv)
+		}
+
+		pubKeyTyped, err := crypto.UnmarshalECDSAPublicKey(block_pub.Bytes)
+		if err != nil {
+			return nil, nil, fmt.Errorf("failed to unmarshal public key: %v", err)
+		}
+
+		privKeyBytes, err := x509.MarshalECPrivateKey(privkey)
+		if err != nil {
+			return nil, nil, fmt.Errorf("failed to marshal private key: %v", err)
+		}
+		privKeyTyped, err := crypto.UnmarshalECDSAPrivateKey(privKeyBytes)
+		if err != nil {
+			return nil, nil, fmt.Errorf("failed to unmarshal private key: %v", err)
+		}
+
+		return pubKeyTyped, privKeyTyped, nil
+	}
+
+	// Keys don't exist, generate new pair
+	if os.IsNotExist(pbErr) && os.IsNotExist(pvErr) {
+		// Create keys directory
 		keyDir := "keys"
-		fmt.Println("Creating keys directory:", keyDir)
 		if mkdirErr := os.MkdirAll(keyDir, 0755); mkdirErr != nil {
-			fmt.Println("Failed to create keys directory:", mkdirErr)
 			return nil, nil, fmt.Errorf("failed to create keys directory: %w", mkdirErr)
 		}
 
-		// Save the public key
-		fmt.Println("Saving public key to:", publicKeyFile)
-		saveErr := os.WriteFile(publicKeyFile, []byte(newPublicKey), 0644)
-		if saveErr != nil {
-			fmt.Println("Failed to save public key:", saveErr)
+		// Generate new key pair
+		newPublicKey, newPrivateKey, genErr := GenerateNewKeyPair()
+		if genErr != nil {
+			return nil, nil, fmt.Errorf("failed to generate new key pair: %w", genErr)
+		}
+
+		// Save public key
+		if saveErr := os.WriteFile(publicKeyFile, []byte(newPublicKey), 0644); saveErr != nil {
 			return nil, nil, fmt.Errorf("failed to save public key: %w", saveErr)
 		}
 
-		// Save the private key
-		fmt.Println("Saving private key to:", privateKeyFile)
-		savePrivateErr := os.WriteFile(privateKeyFile, []byte(newPrivateKey), 0600)
-		if savePrivateErr != nil {
-			fmt.Println("Failed to save private key:", savePrivateErr)
+		// Save private key
+		if savePrivateErr := os.WriteFile(privateKeyFile, []byte(newPrivateKey), 0600); savePrivateErr != nil {
 			return nil, nil, fmt.Errorf("failed to save private key: %w", savePrivateErr)
 		}
 
-		privateKeyUnmarshalled, _ := crypto.UnmarshalPrivateKey([]byte(newPrivateKey))
-		publicKeyUnmarshalled, _ := crypto.UnmarshalPublicKey([]byte(newPublicKey))
-		fmt.Println("Successfully generated and saved new key pair")
-		return publicKeyUnmarshalled, privateKeyUnmarshalled, nil
+		// Unmarshal newly generated keys
+		privateKeyUnmarshalled, privUnmarshalErr := x509.ParseECPrivateKey([]byte(newPrivateKey))
+		if privUnmarshalErr != nil {
+			return nil, nil, fmt.Errorf("failed to unmarshal new private key: %w", privUnmarshalErr)
+		}
+
+		pubKeyTyped, err := crypto.UnmarshalECDSAPublicKey([]byte(newPublicKey))
+		if err != nil {
+			return nil, nil, fmt.Errorf("failed to unmarshal public key: %v", err)
+		}
+
+		privKeyBytes, err := x509.MarshalECPrivateKey(privateKeyUnmarshalled)
+		if err != nil {
+			return nil, nil, fmt.Errorf("failed to marshal private key: %v", err)
+		}
+		privKeyTyped, err := crypto.UnmarshalECDSAPrivateKey(privKeyBytes)
+		if err != nil {
+			return nil, nil, fmt.Errorf("failed to unmarshal private key: %v", err)
+		}
+		return pubKeyTyped, privKeyTyped, nil
 	}
 
 	// Return any other error
-	fmt.Println("Error reading keys from disk:", pbErr, pvErr)
 	return nil, nil, fmt.Errorf("error reading keys from disk: %v, %v", pbErr, pvErr)
 }
 
