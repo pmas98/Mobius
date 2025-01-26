@@ -219,13 +219,16 @@ func (fm *FileManager) ExchangeKeys(stream libp2pnetwork.Stream) error {
 		return fmt.Errorf("failed to read peer's public key: %w", err)
 	}
 
+	fmt.Println("Raw data received from peer:", buffer[:n])
+
 	block, _ := pem.Decode(buffer[:n])
 	if block == nil {
 		return fmt.Errorf("failed to decode peer's public key")
 	}
+
 	peerPublicKey := string(block.Bytes)
 	peerID := stream.Conn().RemotePeer().String()
-
+	fmt.Println("Decoded peer public key:", peerPublicKey)
 	// Store the peer's public key
 	utils.StorePeerPublicKey(peerID, peerPublicKey)
 	log.Printf("Public key exchange completed with peer %s.", peerID)
