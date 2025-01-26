@@ -22,7 +22,6 @@ import (
 
 	"github.com/ipfs/go-cid"
 	dht "github.com/libp2p/go-libp2p-kad-dht"
-	crypt "github.com/libp2p/go-libp2p/core/crypto"
 	"github.com/libp2p/go-libp2p/core/host"
 	libp2pnetwork "github.com/libp2p/go-libp2p/core/network"
 	"github.com/libp2p/go-libp2p/core/peer"
@@ -198,7 +197,7 @@ func (fm *FileManager) ExchangeKeys(stream libp2pnetwork.Stream) error {
 		return fmt.Errorf("no public key found: %w", err)
 	}
 
-	publicKeyRaw, err := crypt.MarshalPublicKey(ownPublicKey)
+	publicKeyRaw, err := x509.MarshalPKIXPublicKey(ownPublicKey)
 	if err != nil {
 		return fmt.Errorf("failed to get raw public key: %w", err)
 	}
@@ -267,7 +266,7 @@ func (fm *FileManager) handleKeyExchange(stream libp2pnetwork.Stream) {
 		return
 	}
 
-	ownPublicKeyBytes, err := crypt.MarshalPublicKey(ownPublicKey)
+	ownPublicKeyBytes, err := x509.MarshalPKIXPublicKey(ownPublicKey)
 	if err != nil {
 		log.Printf("Failed to get raw public key: %v", err)
 		return
@@ -331,12 +330,12 @@ func (fm *FileManager) GetStreamFromPeerID(peerID string) (libp2pnetwork.Stream,
 
 // SendMessage encrypts and sends a message to a specified peer.
 func (fm *FileManager) SendMessage(ctx context.Context, recipientPeerID string, message string, stream libp2pnetwork.Stream) error {
-	peerPublicKeyBytes, err := fm.cryptoMgr.GetPeerPublicKey(recipientPeerID)
+	peerPublicKey, err := fm.cryptoMgr.GetPeerPublicKey(recipientPeerID)
 	if err != nil {
 		return fmt.Errorf("recipient's public key not found: %w", err)
 	}
 
-	encryptedMessage, err := fm.cryptoMgr.Encrypt([]byte(message), peerPublicKeyBytes)
+	encryptedMessage, err := fm.cryptoMgr.Encrypt([]byte(message), peerPublicKey)
 	if err != nil {
 		return fmt.Errorf("failed to encrypt message: %w", err)
 	}

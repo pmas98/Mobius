@@ -183,6 +183,7 @@ func GenerateNewKeyPair() (string, string, error) {
 	if err != nil {
 		return "", "", fmt.Errorf("failed to encode public key: %w", err)
 	}
+
 	publicKeyPEM := pem.EncodeToMemory(&pem.Block{
 		Type:  "PUBLIC KEY",
 		Bytes: publicKeyBytes,
@@ -191,7 +192,7 @@ func GenerateNewKeyPair() (string, string, error) {
 	return string(publicKeyPEM), string(privateKeyPEM), nil
 }
 
-func GetOwnKeysFromDisk() (crypto.PubKey, crypto.PrivKey, error) {
+func GetOwnKeysFromDisk() (any, crypto.PrivKey, error) {
 	publicKeyFile := "keys/pubk.pem"
 	privateKeyFile := "keys/privk.pem"
 
@@ -214,7 +215,7 @@ func GetOwnKeysFromDisk() (crypto.PubKey, crypto.PrivKey, error) {
 		}
 
 		// Unmarshal public key
-		pubKeyTyped, err := crypto.UnmarshalRsaPublicKey(block_pub.Bytes)
+		pubKeyTyped, err := x509.ParsePKIXPublicKey(block_pub.Bytes)
 		if err != nil {
 			return nil, nil, fmt.Errorf("failed to unmarshal public key: %v", err)
 		}

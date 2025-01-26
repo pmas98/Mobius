@@ -50,7 +50,7 @@ func (cm *CryptoManager) AddPeerPublicKey(peerID string, key *rsa.PublicKey) {
 	cm.peerPublicKeys[peerID] = key
 }
 
-func (cm *CryptoManager) GetPeerPublicKey(peerID string) ([]byte, error) {
+func (cm *CryptoManager) GetPeerPublicKey(peerID string) (*pem.Block, error) {
 	keyDir := "keys"
 	keyFile := fmt.Sprintf("%s/%s.pem", keyDir, peerID)
 
@@ -68,9 +68,7 @@ func (cm *CryptoManager) GetPeerPublicKey(peerID string) ([]byte, error) {
 		return nil, fmt.Errorf("invalid public key format for peer %s", peerID)
 	}
 
-	log.Printf("Decoded PEM block: %+v", block)
-
-	return block.Bytes, nil
+	return block, nil
 }
 
 // GenerateRandomBytes generates cryptographically secure random bytes
@@ -258,24 +256,20 @@ func (cm *CryptoManager) GetKeyForFile(fileHash string) ([]byte, error) {
 	return key, nil
 }
 
-func (cm *CryptoManager) Encrypt(message []byte, publicKeyPEM []byte) ([]byte, error) {
-	block, _ := pem.Decode(publicKeyPEM)
-	if block == nil || block.Type != "PUBLIC KEY" {
-		return nil, errors.New("invalid public key PEM")
-	}
+func (cm *CryptoManager) Encrypt(message []byte, publicKeyPEM *pem.Block) ([]byte, error) {
 
-	publicKey, err := x509.ParsePKIXPublicKey(block.Bytes)
+	publicKey, err := x509.ParsePKIXPublicKey(publicKeyPEM.Bytes)
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse public key: %w", err)
 	}
 
-	rsaPublicKey, ok := publicKey.(*rsa.PublicKey)
+	rsaPubKey, ok := publicKey.(*rsa.PublicKey)
 	if !ok {
-		return nil, errors.New("not an RSA public key")
+		return nil, errors.New("parsed key is not an RSA public key")
 	}
 
 	// Use RSA-OAEP encryption
-	encryptedMessage, err := rsa.EncryptOAEP(sha256.New(), rand.Reader, rsaPublicKey, message, nil)
+	encryptedMessage, err := rsa.EncryptOAEP(sha256.New(), rand.Reader, rsaPubKey, message, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to encrypt message: %w", err)
 	}
