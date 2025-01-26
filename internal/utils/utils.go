@@ -298,11 +298,10 @@ func StorePeerPublicKey(peerID string, pubKey crypto.PubKey) error {
 	}
 
 	// Write to file
-	file, err := os.Create(keyFile)
-	if err != nil {
-		return err
-	}
-	defer file.Close()
+	publicKeyPEM := pem.EncodeToMemory(pemBlock)
 
-	return pem.Encode(file, pemBlock)
+	if saveErr := os.WriteFile(keyFile, publicKeyPEM, 0644); saveErr != nil {
+		return saveErr
+	}
+	return nil
 }
