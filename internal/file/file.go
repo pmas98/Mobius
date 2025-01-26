@@ -7,7 +7,6 @@ import (
 	"crypto/rsa"
 	"crypto/x509"
 	"encoding/json"
-	"encoding/pem"
 	"errors"
 	"fmt"
 	"io"
@@ -194,20 +193,14 @@ func (fm *FileManager) ExchangeKeys(stream libp2pnetwork.Stream) error {
 	// Send own public key
 	ownPublicKey, _, err := utils.GetOwnKeysFromDisk()
 	if err != nil {
-		return fmt.Errorf("no public key found for this peer: %w", err)
+		return fmt.Errorf("no public key found: %w", err)
 	}
-
-	if ownPublicKey == nil {
-		return fmt.Errorf("public key is nil")
-	}
-
-	fmt.Println("Public key found for this peer.")
 
 	publicKeyRaw, err := ownPublicKey.Raw()
 	if err != nil {
 		return fmt.Errorf("failed to get raw public key: %w", err)
 	}
-	fmt.Println("Public key raw:", publicKeyRaw)
+
 	if _, err := stream.Write(publicKeyRaw); err != nil {
 		return fmt.Errorf("failed to send public key: %w", err)
 	}
@@ -219,50 +212,43 @@ func (fm *FileManager) ExchangeKeys(stream libp2pnetwork.Stream) error {
 		return fmt.Errorf("failed to read peer's public key: %w", err)
 	}
 
-	fmt.Println("Raw data received from peer:", buffer[:n])
-
-	block, _ := pem.Decode(buffer[:n])
-	if block == nil {
-		return fmt.Errorf("failed to decode peer's public key")
-	}
-
-	peerPublicKey := string(block.Bytes)
 	peerID := stream.Conn().RemotePeer().String()
-	fmt.Println("Decoded peer public key:", peerPublicKey)
-	// Store the peer's public key
-	utils.StorePeerPublicKey(peerID, peerPublicKey)
-	log.Printf("Public key exchange completed with peer %s.", peerID)
+	utils.StorePeerPublicKey(peerID, string(buffer[:n]))
 
+	log.Printf("Public key exchange completed with peer %s.", peerID)
 	return nil
 }
 
 func (fm *FileManager) handleKeyExchange(stream libp2pnetwork.Stream) {
 	defer stream.Close()
 
-	// Read the peer's public key
+	// Read peer's public key
 	buffer := make([]byte, 1024)
 	n, err := stream.Read(buffer)
 	if err != nil {
-		fmt.Errorf("failed to read peer's public key: %w", err)
+		log.Printf("Failed to read peer's public key: %v", err)
+		return
 	}
 
-	peerPublicKey := string(buffer[:n])
 	peerID := stream.Conn().RemotePeer().String()
-
-	// Store the peer's public key
-	utils.StorePeerPublicKey(peerID, peerPublicKey)
-	log.Printf("Received public key from peer %s.", peerID)
+	utils.StorePeerPublicKey(peerID, string(buffer[:n]))
 
 	// Send own public key
-	ownPublicKey, _, exists := utils.GetOwnKeysFromDisk()
-	if exists != nil {
-		fmt.Errorf("no public key found for this peer")
-	}
-	ownPublicKeyBytes, _ := ownPublicKey.Raw()
-
-	_, err = stream.Write(ownPublicKeyBytes)
+	ownPublicKey, _, err := utils.GetOwnKeysFromDisk()
 	if err != nil {
-		fmt.Errorf("failed to send public key: %w", err)
+		log.Printf("No public key found: %v", err)
+		return
+	}
+
+	ownPublicKeyBytes, err := ownPublicKey.Raw()
+	if err != nil {
+		log.Printf("Failed to get raw public key: %v", err)
+		return
+	}
+
+	if _, err := stream.Write(ownPublicKeyBytes); err != nil {
+		log.Printf("Failed to send public key: %v", err)
+		return
 	}
 
 	log.Printf("Public key exchange completed with peer %s.", peerID)
