@@ -66,6 +66,7 @@ type FileManager struct {
 	activeMessageStreams map[string]libp2pnetwork.Stream // peerID -> active stream
 	messageStreamMutex   sync.Mutex
 	privateKey           crypt.PrivKey
+	publicKey            any
 }
 
 type FileKeyInfo struct {
@@ -97,6 +98,10 @@ func NewFileManager(h host.Host, downloadDir, sharedDir string, cryptoMgr *crypt
 	if err := os.MkdirAll(downloadDir, 0755); err != nil {
 		return nil, fmt.Errorf("failed to create download directory: %w", err)
 	}
+	ownPublicKey, ownPrivateKey, key_err := utils.GetOwnKeysFromDisk()
+	if key_err != nil {
+		return nil, fmt.Errorf("no public key found: %w", key_err)
+	}
 
 	fm := &FileManager{
 		host:                 h,
@@ -108,6 +113,8 @@ func NewFileManager(h host.Host, downloadDir, sharedDir string, cryptoMgr *crypt
 		dht:                  dhtInstance,
 		db:                   db,
 		activeMessageStreams: make(map[string]libp2pnetwork.Stream),
+		privateKey:           ownPrivateKey,
+		publicKey:            ownPublicKey,
 	}
 
 	h.SetStreamHandler(fileProtocolID, fm.HandleFileRequest)
@@ -180,15 +187,7 @@ func (fm *FileManager) CloseConnection(pid string, stream libp2pnetwork.Stream) 
 func (fm *FileManager) ExchangeKeys(stream libp2pnetwork.Stream) error {
 	defer stream.Close()
 
-	// Send own public key
-	ownPublicKey, ownPrivateKey, err := utils.GetOwnKeysFromDisk()
-	if err != nil {
-		return fmt.Errorf("no public key found: %w", err)
-	}
-
-	fm.privateKey = ownPrivateKey
-
-	publicKeyRaw, err := x509.MarshalPKIXPublicKey(ownPublicKey)
+	publicKeyRaw, err := x509.MarshalPKIXPublicKey(fm.publicKey)
 	if err != nil {
 		return fmt.Errorf("failed to get raw public key: %w", err)
 	}
@@ -250,14 +249,7 @@ func (fm *FileManager) handleKeyExchange(stream libp2pnetwork.Stream) {
 	log.Printf("Received %d bytes of public key from peer %s", n, peerID)
 	utils.StorePeerPublicKey(peerID, publicKeyPem)
 
-	// Send own public key
-	ownPublicKey, _, err := utils.GetOwnKeysFromDisk()
-	if err != nil {
-		log.Printf("No public key found: %v", err)
-		return
-	}
-
-	ownPublicKeyBytes, err := x509.MarshalPKIXPublicKey(ownPublicKey)
+	ownPublicKeyBytes, err := x509.MarshalPKIXPublicKey(fm.publicKey)
 	if err != nil {
 		log.Printf("Failed to get raw public key: %v", err)
 		return
@@ -292,7 +284,7 @@ func (fm *FileManager) HandleMessageRequest(stream libp2pnetwork.Stream) {
 			encryptedMessage = append(encryptedMessage, buffer[:n]...)
 
 			privateKey := fm.privateKey
-			privateKeyRaw, err := crypt.MarshalPrivateKey(privateKey)
+			privateKeyRaw, err := privateKey.Raw()
 			if err != nil {
 				log.Printf("Failed to get raw private key: %v", err)
 				return
