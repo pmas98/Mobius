@@ -287,9 +287,11 @@ func StorePeerPublicKey(peerID string, pubKey crypto.PubKey) error {
 	keyDir := "keys"
 	keyFile := fmt.Sprintf("%s/%s.pem", keyDir, peerID)
 
-	pubKeyBytes, err := x509.MarshalPKIXPublicKey(pubKey)
+	fmt.Println("Got here")
+
+	pubKeyBytes, err := crypto.MarshalPublicKey(pubKey)
 	if err != nil {
-		return err
+		fmt.Printf("Got error %s", err)
 	}
 
 	pemBlock := &pem.Block{
@@ -299,9 +301,9 @@ func StorePeerPublicKey(peerID string, pubKey crypto.PubKey) error {
 
 	// Write to file
 	publicKeyPEM := pem.EncodeToMemory(pemBlock)
-
+	fmt.Printf("The public key is %s", publicKeyPEM)
 	if saveErr := os.WriteFile(keyFile, publicKeyPEM, 0644); saveErr != nil {
-		return saveErr
+		fmt.Println(saveErr)
 	}
 	return nil
 }
