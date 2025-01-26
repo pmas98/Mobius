@@ -163,12 +163,12 @@ func GenerateFileCID(filePath string) (cid.Cid, error) {
 	return fileCid, nil
 }
 
-// GenerateNewKeyPair generates an ECDSA key pair and returns PEM-encoded public and private keys.
-func GenerateNewKeyPair() ([]byte, []byte, error) {
-	// Generate RSA key pair with 2048-bit key length
+// GenerateNewKeyPair generates an RSA key pair and returns PEM-encoded public and private keys.
+func GenerateNewKeyPair() (string, string, error) {
+	// Generate 2048-bit RSA key pair
 	privateKey, err := rsa.GenerateKey(rand.Reader, 2048)
 	if err != nil {
-		return nil, nil, fmt.Errorf("failed to generate key pair: %w", err)
+		return "", "", fmt.Errorf("failed to generate key pair: %w", err)
 	}
 
 	// Marshal private key to PEM
@@ -181,14 +181,14 @@ func GenerateNewKeyPair() ([]byte, []byte, error) {
 	// Marshal public key to PEM
 	publicKeyBytes, err := x509.MarshalPKIXPublicKey(&privateKey.PublicKey)
 	if err != nil {
-		return nil, nil, fmt.Errorf("failed to encode public key: %w", err)
+		return "", "", fmt.Errorf("failed to encode public key: %w", err)
 	}
 	publicKeyPEM := pem.EncodeToMemory(&pem.Block{
 		Type:  "PUBLIC KEY",
 		Bytes: publicKeyBytes,
 	})
 
-	return publicKeyPEM, privateKeyPEM, nil
+	return string(publicKeyPEM), string(privateKeyPEM), nil
 }
 
 func GetOwnKeysFromDisk() (crypto.PubKey, crypto.PrivKey, error) {
@@ -207,17 +207,26 @@ func GetOwnKeysFromDisk() (crypto.PubKey, crypto.PrivKey, error) {
 			return nil, nil, fmt.Errorf("failed to decode keys")
 		}
 
-		pubKeyTyped, err := crypto.UnmarshalPublicKey(block_pub.Bytes)
+		// Parse private key
+		privkey, err_priv := x509.ParsePKCS1PrivateKey(block_priv.Bytes)
+		if err_priv != nil {
+			return nil, nil, fmt.Errorf("failed to parse private key: %v", err_priv)
+		}
+
+		// Unmarshal public key
+		pubKeyTyped, err := crypto.UnmarshalRsaPublicKey(block_pub.Bytes)
 		if err != nil {
 			return nil, nil, fmt.Errorf("failed to unmarshal public key: %v", err)
 		}
 
-		privKeyBytes, err := crypto.UnmarshalPrivateKey(block_priv.Bytes)
+		// Unmarshal private key
+		privKeyBytes := x509.MarshalPKCS1PrivateKey(privkey)
+		privKeyTyped, err := crypto.UnmarshalRsaPrivateKey(privKeyBytes)
 		if err != nil {
-			return nil, nil, fmt.Errorf("failed to marshal private key: %v", err)
+			return nil, nil, fmt.Errorf("failed to unmarshal private key: %v", err)
 		}
 
-		return pubKeyTyped, privKeyBytes, nil
+		return pubKeyTyped, privKeyTyped, nil
 	}
 
 	// Keys don't exist, generate new pair
@@ -235,33 +244,38 @@ func GetOwnKeysFromDisk() (crypto.PubKey, crypto.PrivKey, error) {
 		}
 
 		// Save public key
-		if saveErr := os.WriteFile(publicKeyFile, newPublicKey, 0644); saveErr != nil {
+		if saveErr := os.WriteFile(publicKeyFile, []byte(newPublicKey), 0644); saveErr != nil {
 			return nil, nil, fmt.Errorf("failed to save public key: %w", saveErr)
 		}
 
 		// Save private key
-		if savePrivateErr := os.WriteFile(privateKeyFile, newPrivateKey, 0600); savePrivateErr != nil {
+		if savePrivateErr := os.WriteFile(privateKeyFile, []byte(newPrivateKey), 0600); savePrivateErr != nil {
 			return nil, nil, fmt.Errorf("failed to save private key: %w", savePrivateErr)
 		}
 
-		// Unmarshal newly generated keys
-		privateKeyUnmarshalled, privUnmarshalErr := crypto.UnmarshalRsaPrivateKey(newPrivateKey)
+		// Parse newly generated keys
+		privateKeyUnmarshalled, privUnmarshalErr := x509.ParsePKCS1PrivateKey([]byte(newPrivateKey))
 		if privUnmarshalErr != nil {
 			return nil, nil, fmt.Errorf("failed to unmarshal new private key: %w", privUnmarshalErr)
 		}
 
-		pubKeyTyped, err := crypto.UnmarshalRsaPublicKey(newPublicKey)
+		pubKeyTyped, err := crypto.UnmarshalRsaPublicKey([]byte(newPublicKey))
 		if err != nil {
 			return nil, nil, fmt.Errorf("failed to unmarshal public key: %v", err)
 		}
 
-		return pubKeyTyped, privateKeyUnmarshalled, nil
+		privKeyBytes := x509.MarshalPKCS1PrivateKey(privateKeyUnmarshalled)
+		privKeyTyped, err := crypto.UnmarshalRsaPrivateKey(privKeyBytes)
+		if err != nil {
+			return nil, nil, fmt.Errorf("failed to unmarshal private key: %v", err)
+		}
+
+		return pubKeyTyped, privKeyTyped, nil
 	}
 
 	// Return any other error
 	return nil, nil, fmt.Errorf("error reading keys from disk: %v, %v", pbErr, pvErr)
 }
-
 func StorePeerPublicKey(peerID string, pubKey crypto.PubKey) error {
 	keyDir := "keys"
 	keyFile := fmt.Sprintf("%s/%s.pem", keyDir, peerID)
