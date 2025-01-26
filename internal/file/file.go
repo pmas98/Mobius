@@ -7,6 +7,7 @@ import (
 	"crypto/rsa"
 	"crypto/x509"
 	"encoding/json"
+	"encoding/pem"
 	"errors"
 	"fmt"
 	"io"
@@ -236,7 +237,13 @@ func (fm *FileManager) handleKeyExchange(stream libp2pnetwork.Stream) {
 		return
 	}
 
-	pbkeyBytes, err := crypt.UnmarshalRsaPublicKey(buffer[:n])
+	block, _ := pem.Decode(buffer[:n])
+	if block == nil || block.Type != "PUBLIC KEY" {
+		log.Printf("Failed to decode PEM block for public key.")
+		return
+	}
+
+	pbkeyBytes, err := crypt.UnmarshalRsaPublicKey(block.Bytes)
 	if err != nil {
 		log.Printf("Failed to unmarshal public key: %v", err)
 		return
