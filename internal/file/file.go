@@ -224,12 +224,18 @@ func (fm *FileManager) ExchangeKeys(stream libp2pnetwork.Stream) error {
 		log.Printf("Failed to decode PEM block")
 
 	}
-	pbkeyBytes, unmarshal_err := crypt.UnmarshalRsaPublicKey(block.Bytes)
-	if unmarshal_err != nil {
-		log.Printf("Failed to unmarshal public key: %v", unmarshal_err)
+	publicKey, err := x509.ParsePKIXPublicKey(block.Bytes)
+	if err != nil {
+		log.Printf("Failed to parse public key: %v", err)
 	}
+
+	rsaPublicKey, ok := publicKey.(*rsa.PublicKey)
+	if !ok {
+		log.Printf("Not an RSA public key")
+	}
+
 	peerID := stream.Conn().RemotePeer().String()
-	utils.StorePeerPublicKey(peerID, pbkeyBytes)
+	utils.StorePeerPublicKey(peerID, rsaPublicKey)
 
 	log.Printf("Public key exchange completed with peer %s.", peerID)
 	return nil
@@ -259,16 +265,21 @@ func (fm *FileManager) handleKeyExchange(stream libp2pnetwork.Stream) {
 		return
 	}
 
-	pbkeyBytes, err := crypt.UnmarshalRsaPublicKey(block.Bytes)
+	publicKey, err := x509.ParsePKIXPublicKey(block.Bytes)
 	if err != nil {
-		log.Printf("Failed to unmarshal public key: %v", err)
+		log.Printf("Failed to parse public key: %v", err)
 		return
 	}
-	fmt.Println(pbkeyBytes)
+
+	rsaPublicKey, ok := publicKey.(*rsa.PublicKey)
+	if !ok {
+		log.Printf("Not an RSA public key")
+		return
+	}
 
 	peerID := stream.Conn().RemotePeer().String()
 	log.Printf("Received %d bytes of public key from peer %s", n, peerID)
-	utils.StorePeerPublicKey(peerID, pbkeyBytes)
+	utils.StorePeerPublicKey(peerID, rsaPublicKey)
 
 	// Send own public key
 	ownPublicKey, _, err := utils.GetOwnKeysFromDisk()
