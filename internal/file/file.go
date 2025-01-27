@@ -207,9 +207,7 @@ func (fm *FileManager) InitiateConnection(ctx context.Context, peerID string) er
 	log.Printf("Key exchange successful with peer: %s", peerID)
 
 	// Store the message stream for the peer
-	fm.mu.Lock()
 	fm.activeMessageStreams[peerID] = message_stream
-	fm.mu.Unlock()
 	log.Printf("Stored message stream for peer: %s", peerID)
 
 	log.Printf("Connection and key exchange established with peer %s.", peerID)
@@ -219,10 +217,7 @@ func (fm *FileManager) InitiateConnection(ctx context.Context, peerID string) er
 
 // SendMessage encrypts and sends a message to a specified peer.
 func (fm *FileManager) SendMessage(ctx context.Context, recipientPeerID string, message string) error {
-	stream, init_err := fm.activeMessageStreams[recipientPeerID]
-	if init_err {
-		return fmt.Errorf("no active message stream found for peer: %s", recipientPeerID)
-	}
+	stream, _ := fm.GetStreamFromPeerID(recipientPeerID)
 
 	peerPublicKey, err := fm.cryptoMgr.GetPeerPublicKey(recipientPeerID)
 	if err != nil {
