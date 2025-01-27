@@ -167,40 +167,6 @@ func (fm *FileManager) InitiateConnection(ctx context.Context, peerID string) er
 
 	log.Printf("Connection and key exchange established with peer %s.", peerID)
 
-	err = fm.NotifyPeerAboutConnection(ctx, peerID)
-	if err != nil {
-		return fmt.Errorf("failed to notify peer about connection: %w", err)
-	}
-
-	return nil
-}
-
-func (fm *FileManager) NotifyPeerAboutConnection(ctx context.Context, peerID string) error {
-	log.Printf("Notifying peer %s about the connection", peerID)
-
-	pid, err := peer.Decode(peerID)
-	if err != nil {
-		return fmt.Errorf("invalid peer ID: %w", err)
-	}
-
-	// Create a signaling stream to notify the peer about the connection.
-	signalingStream, err := fm.host.NewStream(ctx, pid, messagingProtocolID)
-	if err != nil {
-		log.Printf("Failed to establish signaling stream with peer: %s, error: %v", peerID, err)
-		return fmt.Errorf("failed to establish signaling stream: %w", err)
-	}
-
-	// Send a simple message to the other peer to notify about the connection.
-	message := "Connection established and ready for messaging."
-	_, err = signalingStream.Write([]byte(message))
-	if err != nil {
-		signalingStream.Close()
-		return fmt.Errorf("failed to send notification message: %w", err)
-	}
-
-	log.Printf("Sent connection notification to peer %s.", peerID)
-	signalingStream.Close()
-
 	return nil
 }
 
