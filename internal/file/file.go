@@ -155,6 +155,8 @@ func (fm *FileManager) handleConnection(stream libp2pnetwork.Stream) {
 
 	fm.activeMessageStreams[peerID] = messageStream
 
+	go fm.HandleMessageRequest(messageStream)
+
 	log.Printf("Connection established with peer %s", peerID)
 }
 
