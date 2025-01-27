@@ -305,8 +305,6 @@ func (fm *FileManager) HandleMessageRequest(stream libp2pnetwork.Stream) {
 			}
 			encryptedMessage = append(encryptedMessage, buffer[:n]...)
 
-			fmt.Printf("Encrypted message: %v\n", encryptedMessage)
-
 			decryptedMessage, err := fm.cryptoMgr.Decrypt(encryptedMessage)
 			if err != nil {
 				log.Printf("Failed to decrypt message from %s: %v", peerID, err)
