@@ -28,12 +28,13 @@ import (
 )
 
 const (
-	fileProtocolID       = "/mobius/1.0.0"
-	messagingProtocolID  = "/mobius/messaging/1.0.0"
-	publickKeyProtocolID = "/mobius/publickey/1.0.0"
-	rsaKeyBits           = 2048
-	ChunkSize            = 1024 * 1024 // 1MB
-	Parallelism          = 4
+	fileProtocolID         = "/mobius/1.0.0"
+	messagingProtocolID    = "/mobius/messaging/1.0.0"
+	publickKeyProtocolID   = "/mobius/publickey/1.0.0"
+	notificationProtocolID = "/mobius/notification/1.0.0"
+	rsaKeyBits             = 2048
+	ChunkSize              = 1024 * 1024 // 1MB
+	Parallelism            = 4
 )
 
 type ChunkRequest struct {
@@ -67,6 +68,7 @@ type FileManager struct {
 	messageStreamMutex   sync.Mutex
 	privateKey           crypt.PrivKey
 	publicKey            any
+	ctx                  context.Context
 }
 
 type FileKeyInfo struct {
@@ -89,7 +91,7 @@ type ProgressReader struct {
 	OnUpdate func(float64)
 }
 
-func NewFileManager(h host.Host, downloadDir, sharedDir string, cryptoMgr *crypto.CryptoManager, dhtInstance *dht.IpfsDHT, db *db.Database) (*FileManager, error) {
+func NewFileManager(ctx context.Context, h host.Host, downloadDir, sharedDir string, cryptoMgr *crypto.CryptoManager, dhtInstance *dht.IpfsDHT, db *db.Database) (*FileManager, error) {
 	if downloadDir == "" {
 		return nil, ErrInvalidDirectory
 	}
@@ -115,11 +117,13 @@ func NewFileManager(h host.Host, downloadDir, sharedDir string, cryptoMgr *crypt
 		activeMessageStreams: make(map[string]libp2pnetwork.Stream),
 		privateKey:           ownPrivateKey,
 		publicKey:            ownPublicKey,
+		ctx:                  ctx,
 	}
 
 	h.SetStreamHandler(fileProtocolID, fm.HandleFileRequest)
 	h.SetStreamHandler(messagingProtocolID, fm.HandleMessageRequest)
 	h.SetStreamHandler(publickKeyProtocolID, fm.handleKeyExchange)
+	h.SetStreamHandler(notificationProtocolID, fm.HandleIncomingNotification)
 	return fm, nil
 }
 
@@ -166,6 +170,62 @@ func (fm *FileManager) InitiateConnection(ctx context.Context, peerID string) er
 	log.Printf("Stored message stream for peer: %s", peerID)
 
 	log.Printf("Connection and key exchange established with peer %s.", peerID)
+
+	err = fm.NotifyPeerAboutConnection(ctx, peerID)
+	if err != nil {
+		return fmt.Errorf("failed to notify peer about connection: %w", err)
+	}
+
+	return nil
+}
+
+func (fm *FileManager) NotifyPeerAboutConnection(ctx context.Context, peerID string) error {
+	log.Printf("Notifying peer %s about the connection", peerID)
+
+	pid, err := peer.Decode(peerID)
+	if err != nil {
+		return fmt.Errorf("invalid peer ID: %w", err)
+	}
+
+	// Create a signaling stream to notify the peer about the connection.
+	signalingStream, err := fm.host.NewStream(ctx, pid, messagingProtocolID)
+	if err != nil {
+		log.Printf("Failed to establish signaling stream with peer: %s, error: %v", peerID, err)
+		return fmt.Errorf("failed to establish signaling stream: %w", err)
+	}
+
+	// Send a simple message to the other peer to notify about the connection.
+	message := "Connection established and ready for messaging."
+	_, err = signalingStream.Write([]byte(message))
+	if err != nil {
+		signalingStream.Close()
+		return fmt.Errorf("failed to send notification message: %w", err)
+	}
+
+	log.Printf("Sent connection notification to peer %s.", peerID)
+	signalingStream.Close()
+
+	return nil
+}
+
+// SendMessage encrypts and sends a message to a specified peer.
+func (fm *FileManager) SendMessage(ctx context.Context, recipientPeerID string, message string, stream libp2pnetwork.Stream) error {
+	peerPublicKey, err := fm.cryptoMgr.GetPeerPublicKey(recipientPeerID)
+	if err != nil {
+		return fmt.Errorf("recipient's public key not found: %w", err)
+	}
+
+	encryptedMessage, err := fm.cryptoMgr.Encrypt([]byte(message), peerPublicKey)
+	if err != nil {
+		return fmt.Errorf("failed to encrypt message: %w", err)
+	}
+
+	_, err = stream.Write(encryptedMessage)
+	if err != nil {
+		return fmt.Errorf("failed to send message: %w", err)
+	}
+
+	log.Printf("Message sent to peer %s successfully.", recipientPeerID)
 	return nil
 }
 
@@ -301,27 +361,6 @@ func (fm *FileManager) GetStreamFromPeerID(peerID string) (libp2pnetwork.Stream,
 	}
 
 	return peer, nil
-}
-
-// SendMessage encrypts and sends a message to a specified peer.
-func (fm *FileManager) SendMessage(ctx context.Context, recipientPeerID string, message string, stream libp2pnetwork.Stream) error {
-	peerPublicKey, err := fm.cryptoMgr.GetPeerPublicKey(recipientPeerID)
-	if err != nil {
-		return fmt.Errorf("recipient's public key not found: %w", err)
-	}
-
-	encryptedMessage, err := fm.cryptoMgr.Encrypt([]byte(message), peerPublicKey)
-	if err != nil {
-		return fmt.Errorf("failed to encrypt message: %w", err)
-	}
-
-	_, err = stream.Write(encryptedMessage)
-	if err != nil {
-		return fmt.Errorf("failed to send message: %w", err)
-	}
-
-	log.Printf("Message sent to peer %s successfully.", recipientPeerID)
-	return nil
 }
 
 func (fm *FileManager) HandleFileRequest(stream libp2pnetwork.Stream) {
@@ -607,4 +646,14 @@ func (pr *ProgressReader) Read(p []byte) (int, error) {
 		}
 	}
 	return n, err
+}
+
+// HandleIncomingNotification listens for incoming connection notifications from other peers
+func (fm *FileManager) HandleIncomingNotification(stream libp2pnetwork.Stream) {
+	peerID := stream.Conn().RemotePeer().String()
+
+	log.Printf("Waiting for connection notification from peer: %s", peerID)
+
+	// Trigger the stream setup for the connection here
+	fm.InitiateConnection(fm.ctx, peerID)
 }
