@@ -4,7 +4,6 @@ import (
 	"bufio"
 	"context"
 	"crypto/x509"
-	"encoding/binary"
 	"encoding/json"
 	"encoding/pem"
 	"errors"
@@ -341,51 +340,30 @@ func (fm *FileManager) handleKeyExchange(stream libp2pnetwork.Stream) {
 // HandleMessageRequest processes incoming messages from a peer.
 func (fm *FileManager) HandleMessageRequest(stream libp2pnetwork.Stream) {
 	peerID := stream.Conn().RemotePeer().String()
-	log.Printf("New message stream from %s", peerID)
 
-	// Store the stream
-	fm.mu.Lock()
-	fm.activeMessageStreams[peerID] = stream
-	fm.mu.Unlock()
-
+	// Handle the messages in a separate goroutine
 	go func() {
-		defer stream.Close()
-		defer func() {
-			fm.mu.Lock()
-			delete(fm.activeMessageStreams, peerID)
-			fm.mu.Unlock()
-		}()
-
 		for {
-			// 1. Read length prefix (4 bytes)
-			var lengthBuf [4]byte
-			_, err := io.ReadFull(stream, lengthBuf[:])
+			var encryptedMessage []byte
+			buffer := make([]byte, 4096)
+			n, err := stream.Read(buffer)
+			if err == io.EOF {
+				log.Printf("Connection closed by peer %s.", peerID)
+				return
+			}
 			if err != nil {
-				if err == io.EOF {
-					log.Printf("Peer %s closed the stream", peerID)
-				} else {
-					log.Printf("Error reading message length: %v", err)
-				}
+				log.Printf("Error reading message from peer %s: %v", peerID, err)
+				return
+			}
+			encryptedMessage = append(encryptedMessage, buffer[:n]...)
+
+			decryptedMessage, err := fm.cryptoMgr.Decrypt(encryptedMessage)
+			if err != nil {
+				log.Printf("Failed to decrypt message from %s: %v", peerID, err)
 				return
 			}
 
-			// 2. Read full message
-			length := binary.BigEndian.Uint32(lengthBuf[:])
-			encryptedMsg := make([]byte, length)
-			_, err = io.ReadFull(stream, encryptedMsg)
-			if err != nil {
-				log.Printf("Error reading message body: %v", err)
-				return
-			}
-
-			// 3. Decrypt and process
-			decryptedMsg, err := fm.cryptoMgr.Decrypt(encryptedMsg)
-			if err != nil {
-				log.Printf("Decryption failed: %v", err)
-				return
-			}
-
-			log.Printf("Received from %s: %s", peerID, string(decryptedMsg))
+			log.Printf("Received message from %s: %s.", peerID, string(decryptedMessage))
 		}
 	}()
 }
