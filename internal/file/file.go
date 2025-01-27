@@ -220,89 +220,28 @@ func (fm *FileManager) InitiateConnection(ctx context.Context, peerID string) er
 
 // SendMessage encrypts and sends a message to a specified peer.
 func (fm *FileManager) SendMessage(ctx context.Context, recipientPeerID string, message string) error {
-	fm.mu.Lock()
-	stream, ok := fm.activeMessageStreams[recipientPeerID]
-	fm.mu.Unlock()
-
-	if !ok {
-		return fmt.Errorf("no active stream to peer %s", recipientPeerID)
+	stream, init_err := fm.activeMessageStreams[recipientPeerID]
+	if init_err {
+		return fmt.Errorf("no active message stream found for peer: %s", recipientPeerID)
 	}
 
-	// Encrypt message
-	pubKey, err := fm.cryptoMgr.GetPeerPublicKey(recipientPeerID)
+	peerPublicKey, err := fm.cryptoMgr.GetPeerPublicKey(recipientPeerID)
 	if err != nil {
-		return fmt.Errorf("public key not found: %w", err)
+		return fmt.Errorf("recipient's public key not found: %w", err)
 	}
-	encryptedMsg, err := fm.cryptoMgr.Encrypt([]byte(message), pubKey)
+
+	encryptedMessage, err := fm.cryptoMgr.Encrypt([]byte(message), peerPublicKey)
 	if err != nil {
-		return fmt.Errorf("encryption failed: %w", err)
+		return fmt.Errorf("failed to encrypt message: %w", err)
 	}
 
-	// Write length prefix (4 bytes)
-	lengthBuf := make([]byte, 4)
-	binary.BigEndian.PutUint32(lengthBuf, uint32(len(encryptedMsg)))
-	if _, err := stream.Write(lengthBuf); err != nil {
-		return fmt.Errorf("failed to write length: %w", err)
+	_, err = stream.Write(encryptedMessage)
+	if err != nil {
+		return fmt.Errorf("failed to send message: %w", err)
 	}
 
-	// Write encrypted message
-	if _, err := stream.Write(encryptedMsg); err != nil {
-		return fmt.Errorf("failed to write message: %w", err)
-	}
-
+	log.Printf("Message sent to peer %s successfully.", recipientPeerID)
 	return nil
-}
-
-// HandleMessageRequest processes incoming messages from a peer.
-func (fm *FileManager) HandleMessageRequest(stream libp2pnetwork.Stream) {
-	peerID := stream.Conn().RemotePeer().String()
-	log.Printf("New message stream from %s", peerID)
-
-	// Store the stream
-	fm.mu.Lock()
-	fm.activeMessageStreams[peerID] = stream
-	fm.mu.Unlock()
-
-	go func() {
-		defer stream.Close()
-		defer func() {
-			fm.mu.Lock()
-			delete(fm.activeMessageStreams, peerID)
-			fm.mu.Unlock()
-		}()
-
-		for {
-			// 1. Read length prefix (4 bytes)
-			var lengthBuf [4]byte
-			_, err := io.ReadFull(stream, lengthBuf[:])
-			if err != nil {
-				if err == io.EOF {
-					log.Printf("Peer %s closed the stream", peerID)
-				} else {
-					log.Printf("Error reading message length: %v", err)
-				}
-				return
-			}
-
-			// 2. Read full message
-			length := binary.BigEndian.Uint32(lengthBuf[:])
-			encryptedMsg := make([]byte, length)
-			_, err = io.ReadFull(stream, encryptedMsg)
-			if err != nil {
-				log.Printf("Error reading message body: %v", err)
-				return
-			}
-
-			// 3. Decrypt and process
-			decryptedMsg, err := fm.cryptoMgr.Decrypt(encryptedMsg)
-			if err != nil {
-				log.Printf("Decryption failed: %v", err)
-				return
-			}
-
-			log.Printf("Received from %s: %s", peerID, string(decryptedMsg))
-		}
-	}()
 }
 
 func (fm *FileManager) CloseConnection(pid string, stream libp2pnetwork.Stream) {
@@ -397,6 +336,58 @@ func (fm *FileManager) handleKeyExchange(stream libp2pnetwork.Stream) {
 	}
 
 	log.Printf("Public key exchange completed with peer %s.", peerID)
+}
+
+// HandleMessageRequest processes incoming messages from a peer.
+func (fm *FileManager) HandleMessageRequest(stream libp2pnetwork.Stream) {
+	peerID := stream.Conn().RemotePeer().String()
+	log.Printf("New message stream from %s", peerID)
+
+	// Store the stream
+	fm.mu.Lock()
+	fm.activeMessageStreams[peerID] = stream
+	fm.mu.Unlock()
+
+	go func() {
+		defer stream.Close()
+		defer func() {
+			fm.mu.Lock()
+			delete(fm.activeMessageStreams, peerID)
+			fm.mu.Unlock()
+		}()
+
+		for {
+			// 1. Read length prefix (4 bytes)
+			var lengthBuf [4]byte
+			_, err := io.ReadFull(stream, lengthBuf[:])
+			if err != nil {
+				if err == io.EOF {
+					log.Printf("Peer %s closed the stream", peerID)
+				} else {
+					log.Printf("Error reading message length: %v", err)
+				}
+				return
+			}
+
+			// 2. Read full message
+			length := binary.BigEndian.Uint32(lengthBuf[:])
+			encryptedMsg := make([]byte, length)
+			_, err = io.ReadFull(stream, encryptedMsg)
+			if err != nil {
+				log.Printf("Error reading message body: %v", err)
+				return
+			}
+
+			// 3. Decrypt and process
+			decryptedMsg, err := fm.cryptoMgr.Decrypt(encryptedMsg)
+			if err != nil {
+				log.Printf("Decryption failed: %v", err)
+				return
+			}
+
+			log.Printf("Received from %s: %s", peerID, string(decryptedMsg))
+		}
+	}()
 }
 
 func (fm *FileManager) GetStreamFromPeerID(peerID string) (libp2pnetwork.Stream, error) {
