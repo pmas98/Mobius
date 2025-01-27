@@ -61,8 +61,6 @@ func (cm *CryptoManager) GetPeerPublicKey(peerID string) (*pem.Block, error) {
 		return nil, fmt.Errorf("failed to read public key for peer %s: %w", peerID, err)
 	}
 
-	log.Printf("Key file content for peer %s: %s", peerID, keyData)
-
 	// Parse the PEM-encoded public key
 	block, _ := pem.Decode(keyData)
 	if block == nil || block.Type != "PUBLIC KEY" {
