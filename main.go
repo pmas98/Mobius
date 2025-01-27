@@ -18,7 +18,7 @@ import (
 func main() {
 	dbPath := "db.sqlite3"
 	const retryLimit = 3
-	dht, node, db, ctx, err := network.InitializeNode(dbPath)
+	dht, node, db, err := network.InitializeNode(dbPath)
 	if err != nil {
 		log.Fatalf("Failed to initialize P2P node: %v", err)
 	}
@@ -28,7 +28,7 @@ func main() {
 
 	// Initialize file sharing
 	cryptoMgr := crypto.NewCryptoManager()
-	fileShare, err := file.NewFileManager(ctx, node, "download", "shared", cryptoMgr, dht, db)
+	fileShare, err := file.NewFileManager(node, "download", "shared", cryptoMgr, dht, db)
 	if err != nil {
 		log.Fatalf("Failed to initialize file manager: %v", err)
 	}

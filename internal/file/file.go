@@ -28,13 +28,12 @@ import (
 )
 
 const (
-	fileProtocolID         = "/mobius/1.0.0"
-	messagingProtocolID    = "/mobius/messaging/1.0.0"
-	publickKeyProtocolID   = "/mobius/publickey/1.0.0"
-	notificationProtocolID = "/mobius/notification/1.0.0"
-	rsaKeyBits             = 2048
-	ChunkSize              = 1024 * 1024 // 1MB
-	Parallelism            = 4
+	fileProtocolID       = "/mobius/1.0.0"
+	messagingProtocolID  = "/mobius/messaging/1.0.0"
+	publickKeyProtocolID = "/mobius/publickey/1.0.0"
+	rsaKeyBits           = 2048
+	ChunkSize            = 1024 * 1024 // 1MB
+	Parallelism          = 4
 )
 
 type ChunkRequest struct {
@@ -68,7 +67,6 @@ type FileManager struct {
 	messageStreamMutex   sync.Mutex
 	privateKey           crypt.PrivKey
 	publicKey            any
-	ctx                  context.Context
 }
 
 type FileKeyInfo struct {
@@ -91,7 +89,7 @@ type ProgressReader struct {
 	OnUpdate func(float64)
 }
 
-func NewFileManager(ctx context.Context, h host.Host, downloadDir, sharedDir string, cryptoMgr *crypto.CryptoManager, dhtInstance *dht.IpfsDHT, db *db.Database) (*FileManager, error) {
+func NewFileManager(h host.Host, downloadDir, sharedDir string, cryptoMgr *crypto.CryptoManager, dhtInstance *dht.IpfsDHT, db *db.Database) (*FileManager, error) {
 	if downloadDir == "" {
 		return nil, ErrInvalidDirectory
 	}
@@ -117,13 +115,11 @@ func NewFileManager(ctx context.Context, h host.Host, downloadDir, sharedDir str
 		activeMessageStreams: make(map[string]libp2pnetwork.Stream),
 		privateKey:           ownPrivateKey,
 		publicKey:            ownPublicKey,
-		ctx:                  ctx,
 	}
 
 	h.SetStreamHandler(fileProtocolID, fm.HandleFileRequest)
 	h.SetStreamHandler(messagingProtocolID, fm.HandleMessageRequest)
 	h.SetStreamHandler(publickKeyProtocolID, fm.handleKeyExchange)
-	h.SetStreamHandler(notificationProtocolID, fm.HandleIncomingNotification)
 	return fm, nil
 }
 
@@ -646,14 +642,4 @@ func (pr *ProgressReader) Read(p []byte) (int, error) {
 		}
 	}
 	return n, err
-}
-
-// HandleIncomingNotification listens for incoming connection notifications from other peers
-func (fm *FileManager) HandleIncomingNotification(stream libp2pnetwork.Stream) {
-	peerID := stream.Conn().RemotePeer().String()
-
-	log.Printf("Waiting for connection notification from peer: %s", peerID)
-
-	// Trigger the stream setup for the connection here
-	fm.InitiateConnection(fm.ctx, peerID)
 }
