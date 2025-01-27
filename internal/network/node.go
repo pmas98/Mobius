@@ -56,13 +56,13 @@ func (v *FileMetadataValidator) Validate(key string, value []byte) error {
 	return nil
 }
 
-func InitializeNode(dbpath string) (*dht.IpfsDHT, host.Host, *db.Database, error) {
+func InitializeNode(dbpath string) (*dht.IpfsDHT, context.Context, host.Host, *db.Database, error) {
 	ctx := context.Background()
 
 	// Step 1: Set up database connection
 	db, err := db.InitializeDB(dbpath)
 	if err != nil {
-		return nil, nil, nil, fmt.Errorf("failed to initialize database: %w", err)
+		return nil, nil, nil, nil, fmt.Errorf("failed to initialize database: %w", err)
 	}
 
 	_, privKeyStr, err := utils.GetOwnKeysFromDisk()
@@ -78,7 +78,7 @@ func InitializeNode(dbpath string) (*dht.IpfsDHT, host.Host, *db.Database, error
 		libp2p.EnableNATService(),
 	)
 	if err != nil {
-		return nil, nil, nil, fmt.Errorf("failed to create libp2p host: %w", err)
+		return nil, nil, nil, nil, fmt.Errorf("failed to create libp2p host: %w", err)
 	}
 
 	// Set up a DHT with a custom validator for the "file" namespace
@@ -87,7 +87,7 @@ func InitializeNode(dbpath string) (*dht.IpfsDHT, host.Host, *db.Database, error
 	}
 	idht, d_err := dht.New(ctx, h, dht.Mode(dht.ModeClient), dht.Validator(validatorMap), dht.ProtocolPrefix("/mobius"))
 	if d_err != nil {
-		return nil, nil, nil, fmt.Errorf("failed to create DHT: %w", d_err)
+		return nil, nil, nil, nil, fmt.Errorf("failed to create DHT: %w", d_err)
 	}
 
 	// Bootstrap peers
@@ -122,7 +122,7 @@ func InitializeNode(dbpath string) (*dht.IpfsDHT, host.Host, *db.Database, error
 	routingDiscovery := routing.NewRoutingDiscovery(idht)
 	go startDiscovery(ctx, h, routingDiscovery)
 
-	return idht, h, db, nil
+	return idht, ctx, h, db, nil
 }
 func connectToBootstrapPeers(ctx context.Context, h host.Host, bootstrapPeers []multiaddr.Multiaddr) error {
 	peerInfos := convertToAddrInfo(bootstrapPeers)

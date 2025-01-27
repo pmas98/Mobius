@@ -31,6 +31,7 @@ const (
 	fileProtocolID       = "/mobius/1.0.0"
 	messagingProtocolID  = "/mobius/messaging/1.0.0"
 	publickKeyProtocolID = "/mobius/publickey/1.0.0"
+	connectionProtocolID = "/mobius/connection/1.0.0"
 	rsaKeyBits           = 2048
 	ChunkSize            = 1024 * 1024 // 1MB
 	Parallelism          = 4
@@ -67,6 +68,7 @@ type FileManager struct {
 	messageStreamMutex   sync.Mutex
 	privateKey           crypt.PrivKey
 	publicKey            any
+	context              context.Context
 }
 
 type FileKeyInfo struct {
@@ -89,7 +91,7 @@ type ProgressReader struct {
 	OnUpdate func(float64)
 }
 
-func NewFileManager(h host.Host, downloadDir, sharedDir string, cryptoMgr *crypto.CryptoManager, dhtInstance *dht.IpfsDHT, db *db.Database) (*FileManager, error) {
+func NewFileManager(ctx context.Context, h host.Host, downloadDir, sharedDir string, cryptoMgr *crypto.CryptoManager, dhtInstance *dht.IpfsDHT, db *db.Database) (*FileManager, error) {
 	if downloadDir == "" {
 		return nil, ErrInvalidDirectory
 	}
@@ -115,12 +117,45 @@ func NewFileManager(h host.Host, downloadDir, sharedDir string, cryptoMgr *crypt
 		activeMessageStreams: make(map[string]libp2pnetwork.Stream),
 		privateKey:           ownPrivateKey,
 		publicKey:            ownPublicKey,
+		context:              ctx,
 	}
 
 	h.SetStreamHandler(fileProtocolID, fm.HandleFileRequest)
 	h.SetStreamHandler(messagingProtocolID, fm.HandleMessageRequest)
 	h.SetStreamHandler(publickKeyProtocolID, fm.handleKeyExchange)
+	h.SetStreamHandler(connectionProtocolID, fm.handleConnection)
 	return fm, nil
+}
+
+func (fm *FileManager) handleConnection(stream libp2pnetwork.Stream) {
+	defer stream.Close()
+
+	// Read peer ID from the stream
+	buffer := make([]byte, 4096)
+	n, err := stream.Read(buffer)
+	if err != nil {
+		log.Printf("Failed to read peer ID: %v", err)
+		return
+	}
+
+	peerID := string(buffer[:n])
+	log.Printf("Received connection request from peer: %s", peerID)
+
+	pid, err := peer.Decode(peerID)
+	if err != nil {
+		log.Printf("Invalid peer ID: %s, error: %v", peerID, err)
+		return
+	}
+
+	messageStream, err := fm.host.NewStream(fm.context, pid, messagingProtocolID)
+	if err != nil {
+		log.Printf("Failed to create message stream with %s: %v", peerID, err)
+		return
+	}
+
+	fm.activeMessageStreams[peerID] = messageStream
+
+	log.Printf("Connection established with peer %s", peerID)
 }
 
 // InitiateConnection handles the initial connection setup and key exchange with a peer.
@@ -133,6 +168,18 @@ func (fm *FileManager) InitiateConnection(ctx context.Context, peerID string) er
 		return fmt.Errorf("invalid peer ID: %w", err)
 	}
 	log.Printf("Decoded peer ID: %s", pid)
+
+	// Establish a connection with the peer
+	connection_stream, err := fm.host.NewStream(ctx, pid, connectionProtocolID)
+	if err != nil {
+		log.Printf("Failed to establish connection with peer: %s, error: %v", peerID, err)
+		return fmt.Errorf("failed to establish stream: %w", err)
+	}
+	defer connection_stream.Close()
+
+	if _, err := connection_stream.Write([]byte(fm.host.ID().String())); err != nil {
+		return fmt.Errorf("failed to send ID: %w", err)
+	}
 
 	key_exchange_stream, err := fm.host.NewStream(ctx, pid, publickKeyProtocolID)
 	if err != nil {
