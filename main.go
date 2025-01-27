@@ -166,12 +166,8 @@ func main() {
 			}
 			peerID := parts[1]
 			message := strings.Join(parts[2:], " ")
-			stream, stream_err := fileShare.GetStreamFromPeerID(peerID)
-			if stream_err != nil {
-				fmt.Printf("Error getting stream for peer %s: %v\n", peerID, err)
-				continue
-			}
-			err := fileShare.SendMessage(context.Background(), peerID, message, stream)
+
+			err := fileShare.SendMessage(context.Background(), peerID, message)
 			if err != nil {
 				fmt.Printf("Error sending message to peer %s: %v\n", peerID, err)
 			} else {
