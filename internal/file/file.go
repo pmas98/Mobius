@@ -308,8 +308,6 @@ func (fm *FileManager) handleKeyExchange(stream libp2pnetwork.Stream) {
 		Bytes: buffer[:n],
 	})
 
-	fmt.Printf("Public key: %v\n", string(publicKeyPem))
-
 	block, _ := pem.Decode([]byte(publicKeyPem))
 	if block == nil {
 		log.Printf("Failed to decode PEM block")
