@@ -149,8 +149,6 @@ func (fm *FileManager) handleConnection(stream libp2pnetwork.Stream) {
 	}
 
 	var peerName string
-	fm.mu.Lock() // Ensure exclusive access to stdin
-	defer fm.mu.Unlock()
 	reader := bufio.NewReader(os.Stdin)
 	for {
 		fmt.Printf("Enter a name for peer %s (cannot be empty): ", peerID)
@@ -159,7 +157,10 @@ func (fm *FileManager) handleConnection(stream libp2pnetwork.Stream) {
 			log.Printf("Error reading input: %v", err)
 			return
 		}
+
+		// Trim whitespace and newlines
 		peerName = strings.TrimSpace(input)
+
 		if peerName != "" {
 			break
 		}
