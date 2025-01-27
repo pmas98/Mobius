@@ -51,6 +51,18 @@ func InitializeDB(filePath string) (*Database, error) {
 		log.Printf("Error creating table: %v\n", err)
 		return nil, fmt.Errorf("error creating table: %v", err)
 	}
+	peersTableQuery := `
+        CREATE TABLE IF NOT EXISTS peers (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            peer_id TEXT NOT NULL UNIQUE,
+            username TEXT NOT NULL,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        );
+    `
+	if _, err := db.Exec(peersTableQuery); err != nil {
+		log.Printf("Error creating peers table: %v\n", err)
+		return nil, fmt.Errorf("error creating peers table: %v", err)
+	}
 
 	log.Println("Database initialized successfully.")
 	return &Database{db: db}, nil
@@ -80,6 +92,32 @@ func (d *Database) GetFilePath(hash string) (string, error) {
 		return "", fmt.Errorf("error retrieving file path: %w", err)
 	}
 	return filePath, nil
+}
+
+// AddPeer adds a new peer-to-username mapping to the database
+func (d *Database) AddPeer(peerID, username string) error {
+	// Insert new peer mapping
+	insertQuery := `INSERT INTO peers (peer_id, username) VALUES (?, ?)`
+	_, err := d.db.Exec(insertQuery, peerID, username)
+	if err != nil {
+		return fmt.Errorf("error adding peer mapping: %w", err)
+	}
+
+	return nil
+}
+
+func (d *Database) GetUsername(peerID string) (string, error) {
+	query := "SELECT username FROM peers WHERE peer_id = ?"
+	var username string
+	err := d.db.QueryRow(query, peerID).Scan(&username)
+	if err == sql.ErrNoRows {
+		return "", fmt.Errorf("peer not found: %s", peerID)
+	}
+	if err != nil {
+		log.Printf("Error retrieving username: %v\n", err)
+		return "", fmt.Errorf("error retrieving username: %w", err)
+	}
+	return username, nil
 }
 
 func (d *Database) ValidateFileMappings() []string {

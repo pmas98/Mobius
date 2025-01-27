@@ -147,16 +147,17 @@ func main() {
 			}
 
 		case "connect":
-			if len(parts) < 2 {
-				fmt.Println("Usage: connect [peerID]")
+			if len(parts) < 3 {
+				fmt.Println("Usage: connect [peerID] [username]")
 				continue
 			}
 			peerID := parts[1]
-			err := fileShare.InitiateConnection(context.Background(), peerID)
+			username := parts[2]
+			err := fileShare.InitiateConnection(context.Background(), peerID, username)
 			if err != nil {
-				fmt.Printf("Error connecting to peer %s: %v\n", peerID, err)
+				fmt.Printf("Error connecting to peer %s as %s: %v\n", peerID, username, err)
 			} else {
-				fmt.Printf("Connected to peer %s\n", peerID)
+				fmt.Printf("Connected to peer %s as %s\n", peerID, username)
 			}
 
 		case "message":

@@ -12,6 +12,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 
 	"mobius/internal/crypto"
@@ -147,6 +148,25 @@ func (fm *FileManager) handleConnection(stream libp2pnetwork.Stream) {
 		return
 	}
 
+	var peerName string
+	reader := bufio.NewReader(os.Stdin)
+	for {
+		fmt.Printf("Enter a name for peer %s (cannot be empty): ", peerID)
+		input, err := reader.ReadString('\n')
+		if err != nil {
+			log.Printf("Error reading input: %v", err)
+			return
+		}
+
+		// Trim whitespace and newlines
+		peerName = strings.TrimSpace(input)
+
+		if peerName != "" {
+			break
+		}
+		fmt.Println("Name cannot be empty, please try again")
+	}
+	fm.db.AddPeer(peerName, peerID)
 	messageStream, err := fm.host.NewStream(fm.context, pid, messagingProtocolID)
 	if err != nil {
 		log.Printf("Failed to create message stream with %s: %v", peerID, err)
@@ -161,7 +181,7 @@ func (fm *FileManager) handleConnection(stream libp2pnetwork.Stream) {
 }
 
 // InitiateConnection handles the initial connection setup and key exchange with a peer.
-func (fm *FileManager) InitiateConnection(ctx context.Context, peerID string) error {
+func (fm *FileManager) InitiateConnection(ctx context.Context, peerID string, username string) error {
 	log.Printf("Initiating connection with peer: %s", peerID)
 
 	pid, err := peer.Decode(peerID)
@@ -207,7 +227,7 @@ func (fm *FileManager) InitiateConnection(ctx context.Context, peerID string) er
 		return fmt.Errorf("key exchange failed: %w", err)
 	}
 	log.Printf("Key exchange successful with peer: %s", peerID)
-
+	fm.db.AddPeer(username, peerID)
 	// Store the message stream for the peer
 	fm.activeMessageStreams[peerID] = message_stream
 	log.Printf("Stored message stream for peer: %s", peerID)
@@ -235,8 +255,11 @@ func (fm *FileManager) SendMessage(ctx context.Context, recipientPeerID string, 
 	if err != nil {
 		return fmt.Errorf("failed to send message: %w", err)
 	}
-
-	log.Printf("Message sent to peer %s successfully.", recipientPeerID)
+	username, username_err := fm.db.GetUsername(recipientPeerID)
+	if username_err != nil {
+		return fmt.Errorf("failed to get username: %w", username_err)
+	}
+	log.Printf("Message sent to peer %s successfully.", username)
 	return nil
 }
 
