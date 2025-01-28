@@ -379,7 +379,7 @@ func (fm *FileManager) HandleMessageRequest(stream libp2pnetwork.Stream) {
 
 			username := messageParts[0]
 			messageContent := messageParts[1]
-
+			fm.db.AddPeer(username, peerID)
 			log.Printf("Received message from %s: %s", username, messageContent)
 		}
 	}()
