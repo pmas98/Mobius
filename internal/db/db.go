@@ -96,9 +96,22 @@ func (d *Database) GetFilePath(hash string) (string, error) {
 
 // AddPeer adds a new peer-to-username mapping to the database
 func (d *Database) AddPeer(peerID, username string) error {
+	// Check if the peer_id already exists
+	checkQuery := `SELECT COUNT(*) FROM peers WHERE peer_id = ?`
+	var count int
+	err := d.db.QueryRow(checkQuery, peerID).Scan(&count)
+	if err != nil {
+		return fmt.Errorf("error checking for existing peer: %w", err)
+	}
+
+	// If the peer_id already exists, do nothing
+	if count > 0 {
+		return nil
+	}
+
 	// Insert new peer mapping
 	insertQuery := `INSERT INTO peers (peer_id, username) VALUES (?, ?)`
-	_, err := d.db.Exec(insertQuery, peerID, username)
+	_, err = d.db.Exec(insertQuery, peerID, username)
 	if err != nil {
 		return fmt.Errorf("error adding peer mapping: %w", err)
 	}

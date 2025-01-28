@@ -33,6 +33,15 @@ func main() {
 		log.Fatalf("Failed to initialize file manager: %v", err)
 	}
 
+	fmt.Print("Welcome to Mobius, Enter your name: ")
+	scanner := bufio.NewScanner(os.Stdin)
+	if !scanner.Scan() {
+		log.Fatal("Failed to read input")
+	}
+	username := scanner.Text()
+	db.AddPeer(username, node.ID().String())
+	fmt.Printf("Welcome, %s!\n", username)
+
 	fmt.Println("Mobius P2P File Sharing")
 	fmt.Println("Available commands:")
 	fmt.Println("  id                - Display your peer ID")
@@ -75,7 +84,6 @@ func main() {
 		}
 	}()
 
-	scanner := bufio.NewScanner(os.Stdin)
 	for {
 		fmt.Print("\n> ")
 		if !scanner.Scan() {
@@ -189,6 +197,21 @@ func main() {
 		case "exit":
 			fmt.Println("Exiting...")
 			return
+
+		// Handle username command
+		case "/username":
+			if len(parts) < 2 {
+				fmt.Println("Usage: /username [username] [peerID]")
+				continue
+			}
+			username := parts[1]
+			peerID := parts[2]
+			err := db.AddPeer(username, peerID)
+			if err != nil {
+				fmt.Printf("Error adding peer with username %s: %v\n", username, err)
+			} else {
+				fmt.Printf("Peer %s added successfully\n", username)
+			}
 
 		default:
 			fmt.Printf("Unknown command: %s\nType 'help' for available commands\n", command)

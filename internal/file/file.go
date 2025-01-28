@@ -12,7 +12,6 @@ import (
 	"log"
 	"os"
 	"path/filepath"
-	"strings"
 	"sync"
 
 	"mobius/internal/crypto"
@@ -70,6 +69,8 @@ type FileManager struct {
 	privateKey           crypt.PrivKey
 	publicKey            any
 	context              context.Context
+	commandChannel       chan string
+	usernameChannel      chan string
 }
 
 type FileKeyInfo struct {
@@ -148,25 +149,7 @@ func (fm *FileManager) handleConnection(stream libp2pnetwork.Stream) {
 		return
 	}
 
-	var peerName string
-	reader := bufio.NewReader(os.Stdin)
-	for {
-		fmt.Printf("Enter a name for peer %s (cannot be empty): ", peerID)
-		input, err := reader.ReadString('\n')
-		if err != nil {
-			log.Printf("Error reading input: %v", err)
-			return
-		}
-
-		// Trim whitespace and newlines
-		peerName = strings.TrimSpace(input)
-
-		if peerName != "" {
-			break
-		}
-		fmt.Println("Name cannot be empty, please try again")
-	}
-	fm.db.AddPeer(peerName, peerID)
+	fm.usernameChannel <- peerID
 	messageStream, err := fm.host.NewStream(fm.context, pid, messagingProtocolID)
 	if err != nil {
 		log.Printf("Failed to create message stream with %s: %v", peerID, err)
@@ -226,6 +209,9 @@ func (fm *FileManager) InitiateConnection(ctx context.Context, peerID string, us
 		key_exchange_stream.Close()
 		return fmt.Errorf("key exchange failed: %w", err)
 	}
+
+	fmt.Printf("Enter a name for peer %s (cannot be empty): ", peerID)
+
 	log.Printf("Key exchange successful with peer: %s", peerID)
 	fm.db.AddPeer(username, peerID)
 	// Store the message stream for the peer
@@ -338,7 +324,6 @@ func (fm *FileManager) handleKeyExchange(stream libp2pnetwork.Stream) {
 	}
 
 	peerID := stream.Conn().RemotePeer().String()
-	log.Printf("Received %d bytes of public key from peer %s", n, peerID)
 	utils.StorePeerPublicKey(peerID, publicKeyPem)
 
 	ownPublicKeyBytes, err := x509.MarshalPKIXPublicKey(fm.publicKey)
@@ -352,7 +337,6 @@ func (fm *FileManager) handleKeyExchange(stream libp2pnetwork.Stream) {
 		return
 	}
 
-	log.Printf("Public key exchange completed with peer %s.", peerID)
 }
 
 // HandleMessageRequest processes incoming messages from a peer.
