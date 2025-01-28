@@ -136,12 +136,12 @@ func (d *Database) GetUsername(peerID string) (string, bool) {
 func (d *Database) GetPID(username string) (string, bool) {
 	query := "SELECT peer_id FROM peers WHERE username = ?"
 	var peer_id string
-	err := d.db.QueryRow(query, username).Scan(&username)
+	err := d.db.QueryRow(query, username).Scan(&peer_id)
 	if err == sql.ErrNoRows {
 		return "", false
 	}
 	if err != nil {
-		log.Printf("Error retrieving username: %v\n", err)
+		log.Printf("Error retrieving peer_id: %v\n", err)
 		return "", false
 	}
 	return peer_id, true

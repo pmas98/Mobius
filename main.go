@@ -25,13 +25,6 @@ func main() {
 	defer node.Close()
 
 	fmt.Println("P2P node initialized successfully.")
-
-	// Initialize file sharing
-	cryptoMgr := crypto.NewCryptoManager()
-	fileShare, err := file.NewFileManager(ctx, node, "download", "shared", cryptoMgr, dht, db)
-	if err != nil {
-		log.Fatalf("Failed to initialize file manager: %v", err)
-	}
 	scanner := bufio.NewScanner(os.Stdin)
 
 	username, exists := db.GetUsername(node.ID().String())
@@ -44,6 +37,13 @@ func main() {
 		db.AddPeer(username, node.ID().String())
 	}
 	fmt.Printf("Welcome, %s!\n", username)
+
+	// Initialize file sharing
+	cryptoMgr := crypto.NewCryptoManager()
+	fileShare, err := file.NewFileManager(ctx, node, "download", "shared", cryptoMgr, dht, db, username)
+	if err != nil {
+		log.Fatalf("Failed to initialize file manager: %v", err)
+	}
 
 	fmt.Println("Mobius P2P File Sharing")
 	fmt.Println("Available commands:")

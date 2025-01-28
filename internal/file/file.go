@@ -70,8 +70,7 @@ type FileManager struct {
 	privateKey           crypt.PrivKey
 	publicKey            any
 	context              context.Context
-	commandChannel       chan string
-	usernameChannel      chan string
+	username             string
 }
 
 type FileKeyInfo struct {
@@ -94,7 +93,7 @@ type ProgressReader struct {
 	OnUpdate func(float64)
 }
 
-func NewFileManager(ctx context.Context, h host.Host, downloadDir, sharedDir string, cryptoMgr *crypto.CryptoManager, dhtInstance *dht.IpfsDHT, db *db.Database) (*FileManager, error) {
+func NewFileManager(ctx context.Context, h host.Host, downloadDir, sharedDir string, cryptoMgr *crypto.CryptoManager, dhtInstance *dht.IpfsDHT, db *db.Database, name string) (*FileManager, error) {
 	if downloadDir == "" {
 		return nil, ErrInvalidDirectory
 	}
@@ -121,6 +120,7 @@ func NewFileManager(ctx context.Context, h host.Host, downloadDir, sharedDir str
 		privateKey:           ownPrivateKey,
 		publicKey:            ownPublicKey,
 		context:              ctx,
+		username:             name,
 	}
 
 	h.SetStreamHandler(fileProtocolID, fm.HandleFileRequest)
@@ -150,7 +150,6 @@ func (fm *FileManager) handleConnection(stream libp2pnetwork.Stream) {
 		return
 	}
 
-	fm.usernameChannel <- peerID
 	messageStream, err := fm.host.NewStream(fm.context, pid, messagingProtocolID)
 	if err != nil {
 		log.Printf("Failed to create message stream with %s: %v", peerID, err)
@@ -239,7 +238,7 @@ func (fm *FileManager) SendMessage(ctx context.Context, username string, message
 	}
 
 	// Format message as [USERNAME]:[MESSAGE]
-	formattedMessage := fmt.Sprintf("%s:%s", username, message)
+	formattedMessage := fmt.Sprintf("%s:%s", fm.username, message)
 
 	// Encrypt the formatted message
 	encryptedMessage, err := fm.cryptoMgr.Encrypt([]byte(formattedMessage), peerPublicKey)
