@@ -32,14 +32,17 @@ func main() {
 	if err != nil {
 		log.Fatalf("Failed to initialize file manager: %v", err)
 	}
-
-	fmt.Print("Welcome to Mobius, Enter your name: ")
 	scanner := bufio.NewScanner(os.Stdin)
-	if !scanner.Scan() {
-		log.Fatal("Failed to read input")
+
+	username, exists := db.GetUsername(node.ID().String())
+	if !exists {
+		fmt.Print("Welcome to Mobius, Enter your name: ")
+		if !scanner.Scan() {
+			log.Fatal("Failed to read input")
+		}
+		username = scanner.Text()
+		db.AddPeer(username, node.ID().String())
 	}
-	username := scanner.Text()
-	db.AddPeer(username, node.ID().String())
 	fmt.Printf("Welcome, %s!\n", username)
 
 	fmt.Println("Mobius P2P File Sharing")
@@ -49,7 +52,7 @@ func main() {
 	fmt.Println("  get [hash]        - Retrieve file metadata from the DHT")
 	fmt.Println("  download [hash]   - Download a file using its hash")
 	fmt.Println("  connect [peerID]  - Initiate a connection to a peer")
-	fmt.Println("  message [peerID] [message] - Send a message to a peer")
+	fmt.Println("  message [username] [message] - Send a message to a peer")
 	fmt.Println("  help              - Show this help message")
 	fmt.Println("  exit              - Exit the program")
 
@@ -170,17 +173,17 @@ func main() {
 
 		case "message":
 			if len(parts) < 3 {
-				fmt.Println("Usage: message [peerID] [message]")
+				fmt.Println("Usage: message [username] [message]")
 				continue
 			}
-			peerID := parts[1]
+			username := parts[1]
 			message := strings.Join(parts[2:], " ")
 
-			err := fileShare.SendMessage(context.Background(), peerID, message)
+			err := fileShare.SendMessage(context.Background(), username, message)
 			if err != nil {
-				fmt.Printf("Error sending message to peer %s: %v\n", peerID, err)
+				fmt.Printf("Error sending message to peer %s: %v\n", username, err)
 			} else {
-				fmt.Printf("Message sent to peer %s: %s\n", peerID, message)
+				fmt.Printf("Message sent to peer %s: %s\n", username, message)
 			}
 
 		case "help":

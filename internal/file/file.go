@@ -12,6 +12,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 
 	"mobius/internal/crypto"
@@ -224,15 +225,24 @@ func (fm *FileManager) InitiateConnection(ctx context.Context, peerID string, us
 }
 
 // SendMessage encrypts and sends a message to a specified peer.
-func (fm *FileManager) SendMessage(ctx context.Context, recipientPeerID string, message string) error {
-	stream, _ := fm.GetStreamFromPeerID(recipientPeerID)
+func (fm *FileManager) SendMessage(ctx context.Context, username string, message string) error {
+	pid, exists := fm.db.GetPID(username)
+	if exists != true {
+		return fmt.Errorf("failed to get pid: %w", pid)
+	}
 
-	peerPublicKey, err := fm.cryptoMgr.GetPeerPublicKey(recipientPeerID)
+	stream, _ := fm.GetStreamFromPeerID(pid)
+
+	peerPublicKey, err := fm.cryptoMgr.GetPeerPublicKey(pid)
 	if err != nil {
 		return fmt.Errorf("recipient's public key not found: %w", err)
 	}
 
-	encryptedMessage, err := fm.cryptoMgr.Encrypt([]byte(message), peerPublicKey)
+	// Format message as [USERNAME]:[MESSAGE]
+	formattedMessage := fmt.Sprintf("%s:%s", username, message)
+
+	// Encrypt the formatted message
+	encryptedMessage, err := fm.cryptoMgr.Encrypt([]byte(formattedMessage), peerPublicKey)
 	if err != nil {
 		return fmt.Errorf("failed to encrypt message: %w", err)
 	}
@@ -241,10 +251,7 @@ func (fm *FileManager) SendMessage(ctx context.Context, recipientPeerID string, 
 	if err != nil {
 		return fmt.Errorf("failed to send message: %w", err)
 	}
-	username, username_err := fm.db.GetUsername(recipientPeerID)
-	if username_err != nil {
-		return fmt.Errorf("failed to get username: %w", username_err)
-	}
+
 	log.Printf("Message sent to peer %s successfully.", username)
 	return nil
 }
@@ -365,7 +372,16 @@ func (fm *FileManager) HandleMessageRequest(stream libp2pnetwork.Stream) {
 				return
 			}
 
-			log.Printf("Received message from %s: %s.", peerID, string(decryptedMessage))
+			messageParts := strings.SplitN(string(decryptedMessage), ":", 2)
+			if len(messageParts) < 2 {
+				log.Printf("Received invalid message format from %s.", peerID)
+				return
+			}
+
+			username := messageParts[0]
+			messageContent := messageParts[1]
+
+			log.Printf("Received message from %s: %s", username, messageContent)
 		}
 	}()
 }

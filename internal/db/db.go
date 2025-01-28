@@ -95,7 +95,7 @@ func (d *Database) GetFilePath(hash string) (string, error) {
 }
 
 // AddPeer adds a new peer-to-username mapping to the database
-func (d *Database) AddPeer(peerID, username string) error {
+func (d *Database) AddPeer(username, peerID string) error {
 	// Check if the peer_id already exists
 	checkQuery := `SELECT COUNT(*) FROM peers WHERE peer_id = ?`
 	var count int
@@ -119,18 +119,32 @@ func (d *Database) AddPeer(peerID, username string) error {
 	return nil
 }
 
-func (d *Database) GetUsername(peerID string) (string, error) {
+func (d *Database) GetUsername(peerID string) (string, bool) {
 	query := "SELECT username FROM peers WHERE peer_id = ?"
 	var username string
 	err := d.db.QueryRow(query, peerID).Scan(&username)
 	if err == sql.ErrNoRows {
-		return "", fmt.Errorf("peer not found: %s", peerID)
+		return "", false
 	}
 	if err != nil {
 		log.Printf("Error retrieving username: %v\n", err)
-		return "", fmt.Errorf("error retrieving username: %w", err)
+		return "", false
 	}
-	return username, nil
+	return username, true
+}
+
+func (d *Database) GetPID(username string) (string, bool) {
+	query := "SELECT peer_id FROM peers WHERE username = ?"
+	var peer_id string
+	err := d.db.QueryRow(query, username).Scan(&username)
+	if err == sql.ErrNoRows {
+		return "", false
+	}
+	if err != nil {
+		log.Printf("Error retrieving username: %v\n", err)
+		return "", false
+	}
+	return peer_id, true
 }
 
 func (d *Database) ValidateFileMappings() []string {
