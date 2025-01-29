@@ -201,21 +201,6 @@ func main() {
 			fmt.Println("Exiting...")
 			return
 
-		// Handle username command
-		case "/username":
-			if len(parts) < 2 {
-				fmt.Println("Usage: /username [username] [peerID]")
-				continue
-			}
-			username := parts[1]
-			peerID := parts[2]
-			err := db.AddPeer(username, peerID)
-			if err != nil {
-				fmt.Printf("Error adding peer with username %s: %v\n", username, err)
-			} else {
-				fmt.Printf("Peer %s added successfully\n", username)
-			}
-
 		default:
 			fmt.Printf("Unknown command: %s\nType 'help' for available commands\n", command)
 		}

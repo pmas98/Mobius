@@ -2,8 +2,6 @@
 package crypto
 
 import (
-	"crypto/aes"
-	"crypto/cipher"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/sha256"
@@ -13,7 +11,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log"
 	"mobius/internal/utils"
 	"os"
 	"sync"
@@ -33,22 +30,11 @@ var (
 )
 
 type CryptoManager struct {
-	mu             sync.RWMutex
-	peerPublicKeys map[string]*rsa.PublicKey
-	encryptionKeys map[string][]byte // Store encryption keys by file hash
+	mu sync.RWMutex
 }
 
 func NewCryptoManager() *CryptoManager {
-	return &CryptoManager{
-		peerPublicKeys: make(map[string]*rsa.PublicKey),
-		encryptionKeys: make(map[string][]byte),
-	}
-}
-
-func (cm *CryptoManager) AddPeerPublicKey(peerID string, key *rsa.PublicKey) {
-	cm.mu.Lock()
-	defer cm.mu.Unlock()
-	cm.peerPublicKeys[peerID] = key
+	return &CryptoManager{}
 }
 
 func (cm *CryptoManager) GetPeerPublicKey(peerID string) (*pem.Block, error) {
@@ -90,101 +76,6 @@ func (cm *CryptoManager) GenerateNonce() ([]byte, error) {
 	return GenerateRandomBytes(NonceSize)
 }
 
-// EncryptFile encrypts a file using AES-256-GCM
-func (cm *CryptoManager) EncryptFile(inputPath, outputPath string, key []byte) error {
-	if len(key) != KeySize {
-		return ErrInvalidKey
-	}
-
-	// Create AES cipher
-	block, err := aes.NewCipher(key)
-	if err != nil {
-		return fmt.Errorf("failed to create AES cipher: %w", err)
-	}
-
-	// Create GCM mode
-	aesGCM, err := cipher.NewGCM(block)
-	if err != nil {
-		return fmt.Errorf("failed to create GCM: %w", err)
-	}
-
-	// Generate nonce
-	nonce, err := cm.GenerateNonce()
-	if err != nil {
-		return fmt.Errorf("failed to generate nonce: %w", err)
-	}
-
-	// Open input file
-	input, err := os.Open(inputPath)
-	if err != nil {
-		return fmt.Errorf("failed to open input file: %w", err)
-	}
-	defer input.Close()
-
-	// Read input file
-	plaintext, err := io.ReadAll(input)
-	if err != nil {
-		return fmt.Errorf("failed to read input file: %w", err)
-	}
-
-	// Encrypt data
-	ciphertext := aesGCM.Seal(nonce, nonce, plaintext, nil)
-
-	// Create output file
-	err = os.WriteFile(outputPath, ciphertext, 0600)
-	if err != nil {
-		return fmt.Errorf("failed to write encrypted file: %w", err)
-	}
-
-	return nil
-}
-
-// DecryptFile decrypts a file using AES-256-GCM
-func (cm *CryptoManager) DecryptFile(inputPath, outputPath string, key []byte) error {
-	if len(key) != KeySize {
-		return ErrInvalidKey
-	}
-
-	// Read encrypted file
-	ciphertext, err := os.ReadFile(inputPath)
-	if err != nil {
-		return fmt.Errorf("failed to read encrypted file: %w", err)
-	}
-
-	// Create AES cipher
-	block, err := aes.NewCipher(key)
-	if err != nil {
-		return fmt.Errorf("failed to create AES cipher: %w", err)
-	}
-
-	// Create GCM mode
-	aesGCM, err := cipher.NewGCM(block)
-	if err != nil {
-		return fmt.Errorf("failed to create GCM: %w", err)
-	}
-
-	// Extract nonce from ciphertext
-	if len(ciphertext) < NonceSize {
-		return ErrInvalidData
-	}
-	nonce := ciphertext[:NonceSize]
-	ciphertext = ciphertext[NonceSize:]
-
-	// Decrypt data
-	plaintext, err := aesGCM.Open(nil, nonce, ciphertext, nil)
-	if err != nil {
-		return fmt.Errorf("failed to decrypt data: %w", err)
-	}
-
-	// Write decrypted file
-	err = os.WriteFile(outputPath, plaintext, 0600)
-	if err != nil {
-		return fmt.Errorf("failed to write decrypted file: %w", err)
-	}
-
-	return nil
-}
-
 // EncryptKeyForPeer encrypts a symmetric key using RSA-OAEP
 func (cm *CryptoManager) EncryptKeyForPeer(pubKey interface{}, key []byte) (string, error) {
 	rsaPubKey, ok := pubKey.(*rsa.PublicKey)
@@ -218,41 +109,6 @@ func (cm *CryptoManager) DecryptKeyFromPeer(privateKey *rsa.PrivateKey, encrypte
 	}
 
 	return decryptedKey, nil
-}
-
-func (cm *CryptoManager) RemovePeerPublicKey(peerID string) {
-	cm.mu.Lock()
-	defer cm.mu.Unlock()
-
-	// Check if the peer exists
-	if _, exists := cm.peerPublicKeys[peerID]; exists {
-		delete(cm.peerPublicKeys, peerID)
-		log.Printf("Removed public key for peer: %s", peerID)
-	} else {
-		log.Printf("No public key found for peer: %s", peerID)
-	}
-}
-
-func (cm *CryptoManager) StoreKeyForFile(fileHash string, key []byte) error {
-	cm.mu.Lock()
-	defer cm.mu.Unlock()
-
-	// Store the key for the file hash
-	cm.encryptionKeys[fileHash] = key
-	return nil
-}
-
-// Retrieve the encryption key for a file hash
-func (cm *CryptoManager) GetKeyForFile(fileHash string) ([]byte, error) {
-	cm.mu.RLock()
-	defer cm.mu.RUnlock()
-
-	// Check if the key exists
-	key, exists := cm.encryptionKeys[fileHash]
-	if !exists {
-		return nil, fmt.Errorf("no encryption key found for file hash: %s", fileHash)
-	}
-	return key, nil
 }
 
 func (cm *CryptoManager) Encrypt(message []byte, publicKeyPEM *pem.Block) ([]byte, error) {

@@ -92,7 +92,7 @@ func InitializeNode(dbpath string) (*dht.IpfsDHT, context.Context, host.Host, *d
 
 	// Bootstrap peers
 	bootstrapPeers := []string{
-		"/ip4/54.147.136.144/tcp/4000/p2p/12D3KooWPpbKHExn1BNt8rKH72z9K2uPSoL5YgJyrBUAUhquxBUb",
+		"/ip4/54.147.136.144/tcp/4000/p2p/12D3KooWMWmZ7v3jqb7e2Bmbkk2ApfSQvCbXSUSpaYFZfbJmwxm3",
 	}
 	var addrInfos []peer.AddrInfo
 	for _, addr := range bootstrapPeers {
@@ -123,27 +123,6 @@ func InitializeNode(dbpath string) (*dht.IpfsDHT, context.Context, host.Host, *d
 	go startDiscovery(ctx, h, routingDiscovery)
 
 	return idht, ctx, h, db, nil
-}
-func connectToBootstrapPeers(ctx context.Context, h host.Host, bootstrapPeers []multiaddr.Multiaddr) error {
-	peerInfos := convertToAddrInfo(bootstrapPeers)
-
-	var lastErr error
-	for _, peerInfo := range peerInfos {
-		if peerInfo.ID == h.ID() {
-			continue
-		}
-
-		ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
-		defer cancel()
-
-		if err := h.Connect(ctx, peerInfo); err != nil {
-			logger.Warning("Failed to connect to bootstrap peer:", peerInfo, "error:", err)
-			lastErr = err
-			continue
-		}
-		logger.Info("Connected to bootstrap peer:", peerInfo)
-	}
-	return lastErr
 }
 
 // convertToAddrInfo converts multiaddrs to peer.AddrInfo

@@ -184,8 +184,3 @@ func (d *Database) ValidateFileMappings() []string {
 	log.Println("File mapping validation completed.")
 	return hashList
 }
-
-// Close closes the database connection.
-func (d *Database) Close() error {
-	return d.db.Close()
-}
